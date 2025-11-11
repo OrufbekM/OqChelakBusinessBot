@@ -65,9 +65,14 @@ async function handleUpdate(req, res) {
       const data = cq.data;
 
       if (data === "confirm_yes") {
-        await sendMessage(chatId, "Tasdiqlandi ✅", {
+        userStateById.set(chatId, { expected: "delivery_radius" });
+        await sendMessage(chatId, "Sut mahsulotlarini qayergacha yetkazib bera olasiz?", {
           reply_markup: {
-            keyboard: [[{ text: "Maxsulot qo'shish ➕" }]],
+            keyboard: [
+              [{ text: "2 km"}, {text: "4 km"}],
+              [{ text: "6 km"}, {text: "8 km"}],
+              [{ text: "boshqa"}, {text: "Hamma joyga"}]
+            ],
             resize_keyboard: true,
             one_time_keyboard: false,
           },
@@ -91,7 +96,6 @@ async function handleUpdate(req, res) {
       const chatId = message.chat.id;
       const text = typeof message.text === "string" ? message.text.trim() : "";
 
-      // Location sharing
       if (message.location && typeof message.location.latitude === "number") {
         const st = userStateById.get(chatId) || {};
         st.location = {
@@ -116,7 +120,7 @@ async function handleUpdate(req, res) {
 
         const user = await models.User.findOne({ where: { chatId } });
         const uname = user?.username ? `@${user.username}` : "—";
-        const fname = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "—";
+        const fullName = user?.fullName || "—";
         const phone = user?.phone || "—";
         let address = "—";
         if (user?.latitude && user?.longitude) {
@@ -130,7 +134,7 @@ async function handleUpdate(req, res) {
           }
         }
 
-        await sendMessage(chatId, `Ma'lumotlaringiz:\nUsername: ${uname}\nFull name: ${fname}\nTelefon: ${phone}\nManzil: ${address}\n\nMa'lumotlar to'g'rimi?`, {
+        await sendMessage(chatId, `Ma'lumotlaringiz:\nUsername: ${uname}\nFull name: ${fullName}\nTelefon: ${phone}\nManzil: ${address}\n\nMa'lumotlar to'g'rimi?`, {
           reply_markup: {
             inline_keyboard: [
               [
@@ -167,6 +171,87 @@ async function handleUpdate(req, res) {
 
       const state = userStateById.get(chatId) || {};
 
+      if (state.expected === "delivery_radius") {
+        if (text === "Hamma joyga") {
+          try {
+            await models.User.update(
+              { deliveryRadius: null },
+              { where: { chatId } }
+            );
+          } catch (e) {
+            console.error("Sequelize update (deliveryRadius unlimited) failed:", e.message || e);
+          }
+          await sendMessage(chatId, "Tasdiqlandi ✅", {
+            reply_markup: {
+              keyboard: [[{ text: "Maxsulot qo'shish ➕" }]],
+              resize_keyboard: true,
+              one_time_keyboard: false,
+            },
+          });
+          userStateById.delete(chatId);
+          res.sendStatus(200);
+          return;
+        } else if (text === "boshqa") {
+          userStateById.set(chatId, { expected: "delivery_radius_custom" });
+          await sendMessage(chatId, "Necha km yetkazib bera olasiz? (Raqam kiriting, masalan: 10)", {
+            reply_markup: { remove_keyboard: true },
+          });
+          res.sendStatus(200);
+          return;
+        } else {
+          const match = text.match(/^(\d+(?:\.\d+)?)\s*km?$/i);
+          if (match) {
+            const radius = parseFloat(match[1]);
+            try {
+              await models.User.update(
+                { deliveryRadius: radius },
+                { where: { chatId } }
+              );
+            } catch (e) {
+              console.error("Sequelize update (deliveryRadius) failed:", e.message || e);
+            }
+            await sendMessage(chatId, "Tasdiqlandi ✅", {
+              reply_markup: {
+                keyboard: [[{ text: "Maxsulot qo'shish ➕" }]],
+                resize_keyboard: true,
+                one_time_keyboard: false,
+              },
+            });
+            userStateById.delete(chatId);
+            res.sendStatus(200);
+            return;
+          }
+        }
+      }
+
+      if (state.expected === "delivery_radius_custom") {
+        const radius = parseFloat(text);
+        if (!isNaN(radius) && radius > 0) {
+          try {
+            await models.User.update(
+              { deliveryRadius: radius },
+              { where: { chatId } }
+            );
+          } catch (e) {
+            console.error("Sequelize update (deliveryRadius custom) failed:", e.message || e);
+          }
+          await sendMessage(chatId, "Tasdiqlandi ✅", {
+            reply_markup: {
+              keyboard: [[{ text: "Maxsulot qo'shish ➕" }]],
+              resize_keyboard: true,
+              one_time_keyboard: false,
+            },
+          });
+          userStateById.delete(chatId);
+          res.sendStatus(200);
+          return;
+        } else {
+          await sendMessage(chatId, "Iltimos, to'g'ri raqam kiriting (masalan: 10)");
+          res.sendStatus(200);
+          return;
+        }
+      }
+
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
         const fullName = [from.first_name, from.last_name].filter(Boolean).join(" ").trim();
@@ -175,11 +260,8 @@ async function handleUpdate(req, res) {
         try {
           await models.User.upsert({
             chatId,
-            firstName: from.first_name || null,
-            lastName: from.last_name || null,
+            fullName: fullName,
             username,
-            isOnline: true,
-            lastSeen: new Date(),
           });
         } catch (e) {
           console.error("Sequelize upsert (start) failed:", e.message || e);

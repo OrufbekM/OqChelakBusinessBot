@@ -26,61 +26,21 @@ module.exports = (sequelize, Sequelize) => {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      firstName: {
+      fullName: {
         type: Sequelize.STRING,
-        allowNull: true,
-      },
-      lastName: {
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
-      avatar: {
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
-      bio: {
-        type: Sequelize.TEXT,
         allowNull: true,
       },
       phone: {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      isOnline: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: false,
-      },
-      lastSeen: {
-        type: Sequelize.DATE,
-        allowNull: true,
-      },
-      isActive: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: true,
-      },
-      showOnlineStatus: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: true,
-      },
       allowedLocations: {
         type: Sequelize.JSON,
         defaultValue: ["all"],
       },
-      currentSessionId: {
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
       currentLocation: {
         type: Sequelize.STRING,
         allowNull: true,
-      },
-      onlineVisibility: {
-        type: Sequelize.ENUM("everyone", "contacts", "nobody", "custom"),
-        defaultValue: "everyone",
-      },
-      hiddenFromUsers: {
-        type: Sequelize.JSON,
-        defaultValue: [],
       },
       latitude: {
         type: Sequelize.DECIMAL(10, 7),
@@ -88,6 +48,10 @@ module.exports = (sequelize, Sequelize) => {
       },
       longitude: {
         type: Sequelize.DECIMAL(10, 7),
+        allowNull: true,
+      },
+      deliveryRadius: {
+        type: Sequelize.DECIMAL(10, 2),
         allowNull: true,
       },
     },
