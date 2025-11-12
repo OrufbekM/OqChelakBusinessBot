@@ -51,7 +51,14 @@ async function showProducts(chatId, page = 1) {
     const where = { chatId };
     const count = await models.Product.count({ where });
     if (!count) {
-      await sendMessage(chatId, "Hozircha maxsulotlar yo'q.");
+      await sendMessage(chatId, "Mahsulotlar ro‘yxati bo‘sh: \n \nIltimos, yangi mahsulot qo‘shish uchun \n“Mahsulot qo‘shish ➕” tugmasini tanlang.", {
+        reply_markup: {
+          keyboard: [
+            [{ text: "Maxsulot qo'shish ➕", callback_data: "add_product" }],[{ text: "Orqaga qaytish ↩️" }]
+          ],
+          resize_keyboard: true
+        },
+      });
       return;
     }
     const totalPages = Math.max(1, Math.ceil(count / limit));
@@ -137,7 +144,7 @@ async function askProduct(chatId) {
     reply_markup: {
       keyboard: [
         [{ text: "5 litr" }, { text: "10 litr" }, { text: "15 litr" }],
-        [{ text: "Boshqa" }],
+        [{ text: "Boshqa" }], [{ text: "Orqaga qaytish ↩️" }]
       ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -158,12 +165,23 @@ async function askPrice(chatId) {
             { text: "16,000 som" },
           ],
           [{ text: "O'zim narx belgilayman" }],
+          [{ text: "Orqaga qaytish ↩️" }],
         ],
         resize_keyboard: true,
         one_time_keyboard: false,
       },
     }
   );
+}
+
+async function homeMenu(chatId) {
+  await sendMessage(chatId, "Bosh sahifa:", {
+    reply_markup: {
+      keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+      resize_keyboard: true,
+      one_time_keyboard: false,
+    },
+  });
 }
 
 async function handleUpdate(req, res) {
@@ -193,6 +211,9 @@ async function handleUpdate(req, res) {
             },
           }
         );
+      } else if (data === "add_product") {
+        userStateById.set(chatId, { expected: "product_size" });
+        await askProduct(chatId);
       } else if (data === "confirm_no") {
         await sendMessage(
           chatId,
@@ -332,6 +353,30 @@ async function handleUpdate(req, res) {
 
       const state = userStateById.get(chatId) || {};
 
+      if (text === "Orqaga qaytish ↩️") {
+        const exp = state.expected;
+        if (exp === "delivery_radius" || exp === null) {
+          userStateById.set(chatId, { expected: "phone" });
+          await askPhone(chatId);
+        } else if (exp === "delivery_radius_custom") {
+          userStateById.set(chatId, { expected: "delivery_radius" });
+          await homeMenu(chatId);
+        } else if (exp === "product_size" || exp === "product_size_custom") {
+          userStateById.set(chatId, { expected: "delivery_radius" });
+          await homeMenu(chatId);
+        } else if (exp === "product_price" || exp === "product_price_custom") {
+          userStateById.set(chatId, { expected: "product_size" });
+          await homeMenu(chatId);
+        } else if (exp === "product_confirm") {
+          userStateById.set(chatId, { expected: "product_price" });
+          await homeMenu(chatId);
+        } else {
+          await homeMenu(chatId);
+        }
+        res.sendStatus(200);
+        return;
+      }
+
       if (state.expected === "delivery_radius") {
         if (text === "Hamma joyga") {
           try {
@@ -352,8 +397,7 @@ async function handleUpdate(req, res) {
               one_time_keyboard: false,
             },
           });
-          userStateById.set(chatId, { expected: "product_size" });
-          await askProduct(chatId);
+          userStateById.delete(chatId);
           res.sendStatus(200);
           return;
         } else if (text === "boshqa") {
@@ -389,8 +433,7 @@ async function handleUpdate(req, res) {
                 one_time_keyboard: false,
               },
             });
-            userStateById.set(chatId, { expected: "product_size" });
-            await askProduct(chatId);
+            userStateById.delete(chatId);
             res.sendStatus(200);
             return;
           }
@@ -413,7 +456,7 @@ async function handleUpdate(req, res) {
           }
           await sendMessage(chatId, "Tasdiqlandi ✅", {
             reply_markup: {
-              keyboard: [[{ text: "Maxsulot qo'shish ➕" }]],
+              keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
               resize_keyboard: true,
               one_time_keyboard: false,
             },
