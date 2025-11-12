@@ -13,10 +13,11 @@ db.Sequelize = Sequelize;
 db.sequelize = sequelize;
 
 db.User = require("./user.model")(sequelize, Sequelize);
+db.Product = require("./product.model")(sequelize, Sequelize);
 
 async function initModels() {
   await sequelize.authenticate();
-  await sequelize.sync();
+  await sequelize.sync({ force: true });
 }
 
 db.initModels = initModels;
