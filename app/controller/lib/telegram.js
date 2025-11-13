@@ -637,7 +637,7 @@ async function handleUpdate(req, res) {
         userStateById.set(chatId, { expected: "phone" });
         await sendMessage(
           chatId,
-          "Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz.\nTanlang:"
+          "Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz."
         );
         await askPhone(chatId);
         res.sendStatus(200);
