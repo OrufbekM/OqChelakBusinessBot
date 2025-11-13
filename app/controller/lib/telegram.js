@@ -48,13 +48,29 @@ function formatPriceWithComma(price) {
   return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-async function showProducts(chatId, page = 1) {
+async function showProducts(chatId, page = 1, messageId = null) {
   try {
     const limit = PAGE_SIZE;
     const where = { chatId };
     const count = await models.Product.count({ where });
     if (!count) {
-      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
+      const newMessageId = await sendMessage(
+        chatId,
+        "Mahsulotlar ro'yxati bo'sh...",
+        {
+          reply_markup: {
+            keyboard: [
+              [{ text: "Maxsulot qo'shish ➕" }],
+              [{ text: "Maxsulotlarimni korish👁️" }],
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: false,
+          },
+        }
+      );
+      if (newMessageId) {
+        userStateById.set(chatId, { expected: null, messageId: newMessageId });
+      }
       return;
     }
 
@@ -80,21 +96,82 @@ async function showProducts(chatId, page = 1) {
         )
         .join("\n\n") + `\n\nSahifa: ${p}/${totalPages}`;
 
-    const inline_keyboard = [
-      [
-        { text: "Tahrirlash✏️", callback_data: `edit:${rows[0].id}` },
-        { text: "Ochirish🗑️", callback_data: `delete:${rows[0].id}` },
-      ],
-    ];
+    // Use 0 as placeholder for null messageId to avoid "null" string in callback data
+    const validMessageId = messageId && !isNaN(messageId) ? messageId : 0;
 
-    const nav = [];
-    if (p > 1)
-      nav.push({ text: "◀️ Oldingi", callback_data: `plist:${p - 1}` });
-    if (p < totalPages)
-      nav.push({ text: "Keyingi ▶️", callback_data: `plist:${p + 1}` });
-    if (nav.length) inline_keyboard.push(nav);
+    const paginationRow = [];
+    if (p > 1) {
+      paginationRow.push({
+        text: "◀️ Oldingi",
+        callback_data: `plist:${p - 1}:${validMessageId}`,
+      });
+    }
 
-    await sendMessage(chatId, text, { reply_markup: { inline_keyboard } });
+    // Display page numbers
+    const maxPageButtons = 3;
+    let startPage = Math.max(1, p - Math.floor(maxPageButtons / 2));
+    let endPage = Math.min(totalPages, startPage + maxPageButtons - 1);
+
+    // Adjust startPage if we hit the end
+    if (endPage - startPage + 1 < maxPageButtons) {
+      startPage = Math.max(1, endPage - maxPageButtons + 1);
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      paginationRow.push({
+        text: `${i === p ? `[${i}]` : i}`,
+        callback_data: `plist:${i}:${validMessageId}`,
+      });
+    }
+
+    if (p < totalPages) {
+      paginationRow.push({
+        text: "Keyingi ▶️",
+        callback_data: `plist:${p + 1}:${validMessageId}`,
+      });
+    }
+
+    const inline_keyboard = [];
+    if (paginationRow.length > 0) {
+      inline_keyboard.push(paginationRow);
+    }
+
+    inline_keyboard.push([
+      {
+        text: "✏️ Tahrirlash",
+        callback_data: `edit_product_list:${p}:${validMessageId}`,
+      },
+      {
+        text: "🗑️ O'chirish",
+        callback_data: `delete_product_list:${p}:${validMessageId}`,
+      },
+    ]);
+
+    // Add "Orqaga" button on a new row
+    inline_keyboard.push([
+      { text: "Orqaga ↩️", callback_data: `back_to_home_menu:${validMessageId}` },
+    ]);
+
+    const replyMarkup = {
+      inline_keyboard: inline_keyboard,
+    };
+
+    if (messageId) {
+      await telegram.post("/editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text: text,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      });
+    } else {
+      const newMessageId = await sendMessage(chatId, text, {
+        reply_markup: replyMarkup,
+      });
+      if (newMessageId) {
+        userStateById.set(chatId, { expected: null, messageId: newMessageId });
+      }
+    }
   } catch (e) {
     console.error("showProducts failed:", e.message || e);
     await sendMessage(chatId, "Maxsulotlarni ko'rsatishda xatolik yuz berdi.");
@@ -114,6 +191,7 @@ async function sendMessage(chatId, text, extra) {
       ...extra,
     });
     console.log("sendMessage ok:", resp.data);
+    return resp.data.result.message_id;
   } catch (err) {
     console.error(
       "sendMessage failed:",
@@ -143,35 +221,49 @@ async function askLocation(chatId) {
 }
 
 async function askProduct(chatId) {
-  await sendMessage(chatId, "Odatda qancha litr sut sotasiz?", {
-    reply_markup: {
-      keyboard: [
-        [{ text: "5 litr" }, { text: "10 litr" }, { text: "15 litr" }],
-        [{ text: "Boshqa" }],
-        [{ text: "Orqaga qaytish ↩️" }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    },
-  });
+  const messageId = await sendMessage(
+    chatId,
+    "Odatda qancha litr sut sotasiz?",
+    {
+      reply_markup: {
+        keyboard: [
+          [{ text: "5 litr" }, { text: "10 litr" }, { text: "15 litr" }],
+          [{ text: "Boshqa" }],
+          [{ text: "Orqaga qaytish ↩️" }],
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    }
+  );
+  if (messageId) {
+    userStateById.set(chatId, { ...userStateById.get(chatId), messageId });
+  }
 }
 
 async function askPrice(chatId) {
-  await sendMessage(chatId, "1 litr sut uchun narxni kiriting 💵", {
-    reply_markup: {
-      keyboard: [
-        [
-          { text: "10,000 som" },
-          { text: "12,000 som" },
-          { text: "16,000 som" },
+  const messageId = await sendMessage(
+    chatId,
+    "1 litr sut uchun narxni kiriting 💵",
+    {
+      reply_markup: {
+        keyboard: [
+          [
+            { text: "10,000 som" },
+            { text: "12,000 som" },
+            { text: "16,000 som" },
+          ],
+          [{ text: "O'zim narx belgilayman" }],
+          [{ text: "Orqaga qaytish ↩️" }],
         ],
-        [{ text: "O'zim narx belgilayman" }],
-        [{ text: "Orqaga qaytish ↩️" }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    },
-  });
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    }
+  );
+  if (messageId) {
+    userStateById.set(chatId, { ...userStateById.get(chatId), messageId });
+  }
 }
 
 async function homeMenu(chatId) {
@@ -187,108 +279,175 @@ async function homeMenu(chatId) {
   });
 }
 
-async function showEditProductsMenu(chatId) {
-  try {
-    const products = await models.Product.findAll({
-      where: { chatId },
-      order: [["createdAt", "DESC"]],
-    });
+async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
+  const reply_markup = {
+    keyboard: [
+      [{ text: "Maxsulot qo'shish ➕" }],
+      [{ text: "Maxsulotlarimni korish👁️" }],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+  };
 
-    if (!products.length) {
-      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
-      await homeMenu(chatId);
-      return;
+  if (extra.message_id) {
+    try {
+      await telegram.post("/editMessageText", {
+        chat_id: chatId,
+        message_id: extra.message_id,
+        text: message,
+        parse_mode: "HTML",
+        reply_markup: reply_markup,
+      });
+    } catch (e) {
+      console.log(
+        "Could not edit message, sending new message instead:",
+        e.message || e
+      );
+      await sendMessage(chatId, message, { reply_markup });
     }
-
-    const keyboard = products.map((product, index) => [
-      {
-        text: `${index + 1}. Sut ${
-          product.productSize
-        }L, ${formatPriceWithComma(product.productPrice)} som`,
-      },
-    ]);
-
-    keyboard.push([{ text: "Orqaga ↩️" }]);
-
-    await sendMessage(chatId, "Tahrirlash uchun mahsulotni tanlang:", {
-      reply_markup: {
-        keyboard: keyboard,
-        resize_keyboard: true,
-        one_time_keyboard: false,
-      },
-    });
-  } catch (e) {
-    console.error("showEditProductsMenu failed:", e.message || e);
-    await sendMessage(chatId, "Xatolik yuz berdi.");
+  } else {
+    await sendMessage(chatId, message, { reply_markup });
   }
 }
 
-async function showDeleteProductsMenu(chatId) {
+async function showProductSelectionList(
+  chatId,
+  action,
+  page = 1,
+  messageId = null
+) {
   try {
-    const products = await models.Product.findAll({
-      where: { chatId },
-      order: [["createdAt", "DESC"]],
-    });
+    const limit = PAGE_SIZE;
+    const where = { chatId };
+    const count = await models.Product.count({ where });
 
-    if (!products.length) {
-      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
-      await homeMenu(chatId);
+    if (!count) {
+      await sendMessage(chatId, "Mahsulotlar topilmadi.");
       return;
     }
 
-    const keyboard = products.map((product, index) => [
+    const totalPages = Math.max(1, Math.ceil(count / limit));
+    const p = Math.max(1, Math.min(parseInt(page, 10) || 1, totalPages));
+    const offset = (p - 1) * limit;
+
+    const products = await models.Product.findAll({
+      where,
+      limit,
+      offset,
+      order: [["createdAt", "DESC"]],
+    });
+
+    if (!products || products.length === 0) {
+      await sendMessage(chatId, "Mahsulotlar topilmadi.");
+      return;
+    }
+
+    const text = products
+      .map(
+        (pr, idx) =>
+          `${idx + 1}. Sut ${pr.productSize}L, Narxi: ${formatPriceWithComma(
+            pr.productPrice
+          )} som`
+      )
+      .join("\n");
+
+    const actionText = action === "edit" ? "Tahrirlash" : "O'chirish";
+    const callbackPrefix =
+      action === "edit" ? "select_edit_product" : "select_delete_product";
+
+    // Use a valid messageId or 0 as placeholder
+    const validMessageId = messageId && !isNaN(messageId) ? messageId : 0;
+
+    const inline_keyboard = products.map((pr, idx) => [
       {
-        text: `${index + 1}. Sut ${
-          product.productSize
-        }L, ${formatPriceWithComma(product.productPrice)} som`,
+        text: `${idx + 1}. Sut ${pr.productSize}L`,
+        callback_data: `${callbackPrefix}:${pr.id}:${p}:${validMessageId}`,
       },
     ]);
 
-    keyboard.push([{ text: "Orqaga ↩️" }]);
-
-    await sendMessage(chatId, "O'chirish uchun mahsulotni tanlang:", {
-      reply_markup: {
-        keyboard: keyboard,
-        resize_keyboard: true,
-        one_time_keyboard: false,
+    inline_keyboard.push([
+      {
+        text: "Orqaga ↩️",
+        callback_data: `back_to_products:${p}:${validMessageId}`,
       },
-    });
+    ]);
+
+    const replyMarkup = {
+      inline_keyboard: inline_keyboard,
+    };
+
+    if (messageId) {
+      await telegram.post("/editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text: `${actionText} uchun mahsulotni tanlang:\n\n${text}`,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      });
+    } else {
+      await sendMessage(
+        chatId,
+        `${actionText} uchun mahsulotni tanlang:\n\n${text}`,
+        {
+          reply_markup: replyMarkup,
+        }
+      );
+    }
   } catch (e) {
-    console.error("showDeleteProductsMenu failed:", e.message || e);
-    await sendMessage(chatId, "Xatolik yuz berdi.");
+    console.error("showProductSelectionList failed:", e.message || e);
+    await sendMessage(
+      chatId,
+      "Mahsulotlar ro'yxatini ko'rsatishda xatolik yuz berdi."
+    );
   }
 }
 
-async function showProductEditOptions(chatId, productId) {
+async function showProductEditOptions(chatId, productId, messageId = null) {
   const product = await models.Product.findByPk(productId);
   if (!product) {
     await sendMessage(chatId, "Mahsulot topilmadi.");
     return;
   }
 
-  await sendMessage(
-    chatId,
-    `Tanlangan mahsulot:\nSut ${product.productSize}L, ${formatPriceWithComma(
-      product.productPrice
-    )} som\n\nNimani o'zgartirmoqchisiz?`,
-    {
-      reply_markup: {
-        keyboard: [
-          [{ text: `Hajmni o'zgartirish (${product.productSize}L)` }],
-          [
-            {
-              text: `Narxni o'zgartirish (${formatPriceWithComma(
-                product.productPrice
-              )} som)`,
-            },
-          ],
-          [{ text: "Orqaga ↩️" }],
-        ],
-        resize_keyboard: true,
-        one_time_keyboard: false,
-      },
-    }
-  );
+  const reply_markup = {
+    keyboard: [
+      [{ text: `Hajmni o'zgartirish (${product.productSize}L)` }],
+      [
+        {
+          text: `Narxni o'zgartirish (${formatPriceWithComma(
+            product.productPrice
+          )} som)`,
+        },
+      ],
+      [{ text: "Orqaga ↩️" }],
+    ],
+    inline_keyboard: [
+      [
+        { text: "Tahrirlash✏️", callback_data: `edit_product:${productId}` },
+        { text: "Ochirish🗑️", callback_data: `delete_product:${productId}` },
+      ],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+  };
+
+  const text = `Tanlangan mahsulot:\nSut ${
+    product.productSize
+  }L, ${formatPriceWithComma(
+    product.productPrice
+  )} som\n\nNimani o'zgartirmoqchisiz?`;
+
+  if (messageId) {
+    await telegram.post("/editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: "HTML",
+      reply_markup: reply_markup,
+    });
+  } else {
+    await sendMessage(chatId, text, { reply_markup });
+  }
 }
 
 async function handleUpdate(req, res) {
@@ -333,46 +492,216 @@ async function handleUpdate(req, res) {
         const st = userStateById.get(chatId) || {};
         const productSize = st.productSize;
         const productPrice = st.productPrice;
+        // Use the confirmation message ID (has inline keyboard, can be edited)
+        const confirmationMessageId = cq.message.message_id;
         try {
           if (productSize && productPrice) {
-            await models.Product.create({
-              chatId,
+            // Validate data before creating
+            if (!chatId || !productSize || !productPrice) {
+              throw new Error("Ma'lumotlar to'liq emas");
+            }
+            if (productSize <= 0 || productPrice <= 0) {
+              throw new Error("Hajm va narx musbat son bo'lishi kerak");
+            }
+
+            const newProduct = await models.Product.create({
+              chatId: BigInt(chatId),
               productName: "Sut",
-              productSize,
-              productPrice,
+              productSize: parseInt(productSize, 10),
+              productPrice: parseInt(productPrice, 10),
             });
-            await homeMenu(chatId);
+
+            if (!newProduct) {
+              throw new Error("Mahsulot yaratilmadi");
+            }
+
+            // Use the confirmation message ID which has inline keyboard and can be edited
+            await sendHomeMenuWithMessage(
+              chatId,
+              `Mahsulot qo'shildi ✅\n\nSut ${productSize}L, ${formatPriceWithComma(
+                productPrice
+              )} som`,
+              { message_id: confirmationMessageId }
+            );
           } else {
             await sendMessage(chatId, "Xatolik: ma'lumotlar to'liq emas.");
           }
         } catch (e) {
           console.error("Sequelize save (product) failed:", e.message || e);
+          console.error("Full error:", e);
           await sendMessage(
             chatId,
-            "Xatolik yuz berdi. Keyinroq urinib ko'ring."
+            `Xatolik yuz berdi: ${
+              e.message || "Noma'lum xatolik"
+            }. Keyinroq urinib ko'ring.`
           );
         }
         userStateById.delete(chatId);
       } else if (data === "prod_confirm_no") {
+        const confirmationMessageId = cq.message.message_id;
         userStateById.set(chatId, {});
-        await homeMenu(chatId);
+        await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️", {
+          message_id: confirmationMessageId,
+        });
       } else if (data.startsWith("plist:")) {
-        const page = parseInt(data.split(":")[1], 10);
-        await showProducts(chatId, page);
-      } else if (data.startsWith("edit:")) {
-        const productId = parseInt(data.split(":")[1], 10);
-        await showEditProductsMenu(chatId);
+        const parts = data.split(":");
+        const page = parseInt(parts[1], 10);
+        let messageId = parts[2] && parts[2] !== "null" && parts[2] !== "0" && !isNaN(parseInt(parts[2], 10)) 
+          ? parseInt(parts[2], 10) 
+          : null;
+        await showProducts(chatId, page, messageId);
+      } else if (data.startsWith("edit_product_list:")) {
+        const parts = data.split(":");
+        const page = parseInt(parts[1], 10) || 1;
+        let messageId =
+          parts[2] && parts[2] !== "null" && parts[2] !== "0" ? parseInt(parts[2], 10) : null;
+        if (!messageId || isNaN(messageId) || messageId === 0) {
+          messageId = cq.message.message_id;
+        }
+        await showProductSelectionList(chatId, "edit", page, messageId);
+      } else if (data.startsWith("delete_product_list:")) {
+        const parts = data.split(":");
+        const page = parseInt(parts[1], 10) || 1;
+        let messageId =
+          parts[2] && parts[2] !== "null" && parts[2] !== "0" ? parseInt(parts[2], 10) : null;
+        if (!messageId || isNaN(messageId) || messageId === 0) {
+          messageId = cq.message.message_id;
+        }
+        await showProductSelectionList(chatId, "delete", page, messageId);
+      } else if (data.startsWith("select_edit_product:")) {
+        const parts = data.split(":");
+        const productId = parseInt(parts[1], 10);
+        const page = parts[2] && !isNaN(parseInt(parts[2], 10)) ? parseInt(parts[2], 10) : 1;
+        let messageId = parts[3] && parts[3] !== "NaN" && parts[3] !== "null" && parts[3] !== "0" && !isNaN(parseInt(parts[3], 10)) 
+          ? parseInt(parts[3], 10) 
+          : cq.message.message_id;
         userStateById.set(chatId, {
-          expected: "edit_product_selection",
+          expected: "edit_product_option",
           productId,
+          messageId,
+          page,
         });
-      } else if (data.startsWith("delete:")) {
-        const productId = parseInt(data.split(":")[1], 10);
-        await showDeleteProductsMenu(chatId);
+        await showProductEditOptions(chatId, productId, messageId);
+      } else if (data.startsWith("select_delete_product:")) {
+        const parts = data.split(":");
+        const productId = parseInt(parts[1], 10);
+        const page = parts[2] && !isNaN(parseInt(parts[2], 10)) ? parseInt(parts[2], 10) : 1;
+        let messageId = parts[3] && parts[3] !== "NaN" && parts[3] !== "null" && parts[3] !== "0" && !isNaN(parseInt(parts[3], 10))
+          ? parseInt(parts[3], 10)
+          : cq.message.message_id;
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: messageId,
+          text: `Mahsulotni o'chirishni tasdiqlaysizmi?`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Ha ✅",
+                  callback_data: `confirm_delete:${productId}:${page}:${messageId}`,
+                },
+                {
+                  text: "Yo'q ❌",
+                  callback_data: `cancel_delete:${page}:${messageId}`,
+                },
+              ],
+            ],
+          },
+        });
+      } else if (data.startsWith("back_to_products:")) {
+        const parts = data.split(":");
+        const page = parseInt(parts[1], 10) || 1;
+        let messageId = parts[2] && parts[2] !== "NaN" && parts[2] !== "null" && parts[2] !== "0" && !isNaN(parseInt(parts[2], 10))
+          ? parseInt(parts[2], 10)
+          : cq.message.message_id;
+        await showProducts(chatId, page, messageId);
+      } else if (data.startsWith("edit_product:")) {
+        const parts = data.split(":");
+        const productId = parseInt(parts[1], 10);
+        const messageId = parts[2]
+          ? parseInt(parts[2], 10)
+          : cq.message.message_id;
         userStateById.set(chatId, {
-          expected: "delete_product_selection",
+          expected: "edit_product_option",
           productId,
+          messageId,
         });
+        await showProductEditOptions(chatId, productId, messageId);
+      } else if (data.startsWith("delete_product:")) {
+        const parts = data.split(":");
+        const productId = parseInt(parts[1], 10);
+        const messageId = parts[2]
+          ? parseInt(parts[2], 10)
+          : cq.message.message_id;
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: messageId,
+          text: `Mahsulotni o'chirishni tasdiqlaysizmi?`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Ha ✅",
+                  callback_data: `confirm_delete:${productId}:${messageId}`,
+                },
+                {
+                  text: "Yo'q ❌",
+                  callback_data: `cancel_delete:${messageId}`,
+                },
+              ],
+            ],
+          },
+        });
+      } else if (data.startsWith("confirm_delete:")) {
+        const parts = data.split(":");
+        const productId = parseInt(parts[1], 10);
+        // Handle both old format (productId:messageId) and new format (productId:page:messageId)
+        let page = 1;
+        let messageId = cq.message.message_id;
+        if (parts.length === 3) {
+          // Old format: confirm_delete:productId:messageId
+          messageId = parseInt(parts[2], 10);
+        } else if (parts.length >= 4) {
+          // New format: confirm_delete:productId:page:messageId
+          page = parseInt(parts[2], 10) || 1;
+          messageId = parseInt(parts[3], 10);
+        }
+        const product = await models.Product.findByPk(productId);
+        if (product) {
+          await models.Product.destroy({ where: { id: productId } });
+          // Go back to products list after deletion
+          await showProducts(chatId, page, messageId);
+        } else {
+          await sendMessage(
+            chatId,
+            "Mahsulot topilmadi yoki allaqachon o'chirilgan🤷‍♂️"
+          );
+        }
+        userStateById.delete(chatId);
+      } else if (data.startsWith("cancel_delete")) {
+        const parts = data.split(":");
+        // Handle both old format (cancel_delete:messageId) and new format (cancel_delete:page:messageId)
+        let page = 1;
+        let messageId = cq.message.message_id;
+        if (parts.length === 2) {
+          // Old format: cancel_delete:messageId
+          messageId = parseInt(parts[1], 10);
+        } else if (parts.length >= 3) {
+          // New format: cancel_delete:page:messageId
+          page = parseInt(parts[1], 10) || 1;
+          messageId = parseInt(parts[2], 10);
+        }
+        // Go back to products list
+        await showProducts(chatId, page, messageId);
+        userStateById.delete(chatId);
+      } else if (data.startsWith("back_to_home_menu:")) {
+        const messageId = parseInt(data.split(":")[1], 10);
+        await sendHomeMenuWithMessage(chatId, "Bosh menyu ↩️", {
+          message_id: messageId,
+        });
+        userStateById.delete(chatId);
       }
 
       await telegram.post("/answerCallbackQuery", {
@@ -474,51 +803,8 @@ async function handleUpdate(req, res) {
       const state = userStateById.get(chatId) || {};
 
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
-        if (state.expected && state.expected.includes("edit")) {
-          await homeMenu(chatId);
-          userStateById.delete(chatId);
-        } else {
-          await homeMenu(chatId);
-        }
-        res.sendStatus(200);
-        return;
-      }
-
-      if (state.expected === "edit_product_selection") {
-        const products = await models.Product.findAll({
-          where: { chatId },
-          order: [["createdAt", "DESC"]],
-        });
-
-        const selectedIndex = parseInt(text.split(".")[0], 10) - 1;
-
-        if (selectedIndex >= 0 && selectedIndex < products.length) {
-          const selectedProduct = products[selectedIndex];
-          await showProductEditOptions(chatId, selectedProduct.id);
-          userStateById.set(chatId, {
-            expected: "edit_product_option",
-            productId: selectedProduct.id,
-          });
-        }
-        res.sendStatus(200);
-        return;
-      }
-
-      if (state.expected === "delete_product_selection") {
-        const products = await models.Product.findAll({
-          where: { chatId },
-          order: [["createdAt", "DESC"]],
-        });
-
-        const selectedIndex = parseInt(text.split(".")[0], 10) - 1;
-
-        if (selectedIndex >= 0 && selectedIndex < products.length) {
-          const selectedProduct = products[selectedIndex];
-          await models.Product.destroy({ where: { id: selectedProduct.id } });
-          await sendMessage(chatId, "Maxsulot o'chirildi ✅");
-          await showProducts(chatId, 1);
-          userStateById.delete(chatId);
-        }
+        await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
+        userStateById.delete(chatId);
         res.sendStatus(200);
         return;
       }
@@ -530,7 +816,7 @@ async function handleUpdate(req, res) {
         if (!product) {
           await sendMessage(chatId, "Mahsulot topilmadi.");
           userStateById.delete(chatId);
-          await homeMenu(chatId);
+          await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
           res.sendStatus(200);
           return;
         }
@@ -588,13 +874,18 @@ async function handleUpdate(req, res) {
         }
 
         if (newSize && newSize > 0) {
+          const product = await models.Product.findByPk(productId);
           await models.Product.update(
             { productSize: newSize },
             { where: { id: productId } }
           );
-          await sendMessage(chatId, "Mahsulot hajmi yangilandi ✅");
+          await sendHomeMenuWithMessage(
+            chatId,
+            `Mahsulot hajmi o'zgartirildi ✅\n\nSut ${newSize}L, ${formatPriceWithComma(
+              product.productPrice
+            )} som`
+          );
           userStateById.delete(chatId);
-          await homeMenu(chatId);
         } else {
           await sendMessage(
             chatId,
@@ -634,13 +925,18 @@ async function handleUpdate(req, res) {
             return;
           }
 
+          const product = await models.Product.findByPk(productId);
           await models.Product.update(
             { productPrice: newPrice },
             { where: { id: productId } }
           );
-          await sendMessage(chatId, "Mahsulot narxi yangilandi ✅");
+          await sendHomeMenuWithMessage(
+            chatId,
+            `Mahsulot narxi o'zgartirildi ✅\n\nSut ${
+              product.productSize
+            }L, ${formatPriceWithComma(newPrice)} som`
+          );
           userStateById.delete(chatId);
-          await homeMenu(chatId);
         } else {
           await sendMessage(
             chatId,
@@ -664,7 +960,10 @@ async function handleUpdate(req, res) {
               e.message || e
             );
           }
-          await homeMenu(chatId);
+          await sendHomeMenuWithMessage(
+            chatId,
+            "Yetkazib berish radiusi o'zgartirildi ✅\n\nHamma joyga yetkazib beriladi"
+          );
           userStateById.delete(chatId);
           res.sendStatus(200);
           return;
@@ -694,7 +993,10 @@ async function handleUpdate(req, res) {
                 e.message || e
               );
             }
-            await homeMenu(chatId);
+            await sendHomeMenuWithMessage(
+              chatId,
+              `Yetkazib berish radiusi o'zgartirildi ✅\n\n${radius} km masofaga yetkazib beriladi`
+            );
             userStateById.delete(chatId);
             res.sendStatus(200);
             return;
@@ -716,7 +1018,10 @@ async function handleUpdate(req, res) {
               e.message || e
             );
           }
-          await homeMenu(chatId);
+          await sendHomeMenuWithMessage(
+            chatId,
+            `Yetkazib berish radiusi o'zgartirildi ✅\n\n${radius} km masofaga yetkazib beriladi`
+          );
           userStateById.delete(chatId);
           res.sendStatus(200);
           return;
