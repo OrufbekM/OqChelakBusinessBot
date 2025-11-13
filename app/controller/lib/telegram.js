@@ -7,7 +7,6 @@ const {
   reverseGeocodeDetailed,
   formatUzAddress,
 } = require("../../utils/geocode");
-const { keyboard } = require("telegraf/markup");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 
@@ -45,68 +44,57 @@ function getWebhookPath() {
   return BOT_TOKEN ? `/webhook/${BOT_TOKEN}` : `/webhook`;
 }
 
+function formatPriceWithComma(price) {
+  return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 async function showProducts(chatId, page = 1) {
   try {
     const limit = PAGE_SIZE;
     const where = { chatId };
     const count = await models.Product.count({ where });
     if (!count) {
-      await sendMessage(
-        chatId,
-        "Mahsulotlar ro‘yxati bo‘sh: \n \nIltimos, yangi mahsulot qo‘shish uchun \n“Mahsulot qo‘shish ➕” tugmasini tanlang.",
-        {
-          reply_markup: {
-            keyboard: [
-              [{ text: "Maxsulot qo'shish ➕", callback_data: "add_product" }],
-              [{ text: "Orqaga qaytish ↩️" }],
-            ],
-            resize_keyboard: true,
-          },
-        }
-      );
+      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
       return;
     }
+
     const totalPages = Math.max(1, Math.ceil(count / limit));
-    let p = Math.max(1, Math.min(parseInt(page, 10) || 1, totalPages));
-    let offset = (p - 1) * limit;
-    let rows = await models.Product.findAll({
+    const p = Math.max(1, Math.min(parseInt(page, 10) || 1, totalPages));
+    const offset = (p - 1) * limit;
+
+    const rows = await models.Product.findAll({
       where,
       limit,
       offset,
       order: [["createdAt", "DESC"]],
     });
-    if (rows.length === 0 && count > 0) {
-      p = 1;
-      offset = 0;
-      rows = await models.Product.findAll({
-        where,
-        limit,
-        offset,
-        order: [["createdAt", "DESC"]],
-      });
-    }
-    const list = rows
-      .map(
-        (pr) =>
-          `Maxsulotingiz: ${pr.productName || "Sut"}\nnarxi: ${
-            pr.productPrice
-          } som\nhajmi: ${pr.productSize} litr\nqo'shilgan: ${formatUzDate(
-            pr.createdAt
-          )}`
-      )
-      .join("\n\n");
-    const text = `${list}\n\nSahifa: ${p}/${totalPages}`;
+
+    const text =
+      rows
+        .map(
+          (pr, idx) =>
+            `${idx + 1}. Sut\n` +
+            `Narxi: ${formatPriceWithComma(pr.productPrice)} som\n` +
+            `Hajmi: ${pr.productSize} litr\n` +
+            `Qo'shilgan: ${formatUzDate(pr.createdAt)}`
+        )
+        .join("\n\n") + `\n\nSahifa: ${p}/${totalPages}`;
+
+    const inline_keyboard = [
+      [
+        { text: "Tahrirlash✏️", callback_data: `edit:${rows[0].id}` },
+        { text: "Ochirish🗑️", callback_data: `delete:${rows[0].id}` },
+      ],
+    ];
+
     const nav = [];
     if (p > 1)
       nav.push({ text: "◀️ Oldingi", callback_data: `plist:${p - 1}` });
     if (p < totalPages)
       nav.push({ text: "Keyingi ▶️", callback_data: `plist:${p + 1}` });
-    const reply_markup = nav.length ? { inline_keyboard: [nav] } : undefined;
-    await sendMessage(
-      chatId,
-      text,
-      reply_markup ? { reply_markup } : undefined
-    );
+    if (nav.length) inline_keyboard.push(nav);
+
+    await sendMessage(chatId, text, { reply_markup: { inline_keyboard } });
   } catch (e) {
     console.error("showProducts failed:", e.message || e);
     await sendMessage(chatId, "Maxsulotlarni ko'rsatishda xatolik yuz berdi.");
@@ -199,6 +187,110 @@ async function homeMenu(chatId) {
   });
 }
 
+async function showEditProductsMenu(chatId) {
+  try {
+    const products = await models.Product.findAll({
+      where: { chatId },
+      order: [["createdAt", "DESC"]],
+    });
+
+    if (!products.length) {
+      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
+      await homeMenu(chatId);
+      return;
+    }
+
+    const keyboard = products.map((product, index) => [
+      {
+        text: `${index + 1}. Sut ${
+          product.productSize
+        }L, ${formatPriceWithComma(product.productPrice)} som`,
+      },
+    ]);
+
+    keyboard.push([{ text: "Orqaga ↩️" }]);
+
+    await sendMessage(chatId, "Tahrirlash uchun mahsulotni tanlang:", {
+      reply_markup: {
+        keyboard: keyboard,
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    });
+  } catch (e) {
+    console.error("showEditProductsMenu failed:", e.message || e);
+    await sendMessage(chatId, "Xatolik yuz berdi.");
+  }
+}
+
+async function showDeleteProductsMenu(chatId) {
+  try {
+    const products = await models.Product.findAll({
+      where: { chatId },
+      order: [["createdAt", "DESC"]],
+    });
+
+    if (!products.length) {
+      await sendMessage(chatId, "Mahsulotlar ro'yxati bo'sh...");
+      await homeMenu(chatId);
+      return;
+    }
+
+    const keyboard = products.map((product, index) => [
+      {
+        text: `${index + 1}. Sut ${
+          product.productSize
+        }L, ${formatPriceWithComma(product.productPrice)} som`,
+      },
+    ]);
+
+    keyboard.push([{ text: "Orqaga ↩️" }]);
+
+    await sendMessage(chatId, "O'chirish uchun mahsulotni tanlang:", {
+      reply_markup: {
+        keyboard: keyboard,
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    });
+  } catch (e) {
+    console.error("showDeleteProductsMenu failed:", e.message || e);
+    await sendMessage(chatId, "Xatolik yuz berdi.");
+  }
+}
+
+async function showProductEditOptions(chatId, productId) {
+  const product = await models.Product.findByPk(productId);
+  if (!product) {
+    await sendMessage(chatId, "Mahsulot topilmadi.");
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    `Tanlangan mahsulot:\nSut ${product.productSize}L, ${formatPriceWithComma(
+      product.productPrice
+    )} som\n\nNimani o'zgartirmoqchisiz?`,
+    {
+      reply_markup: {
+        keyboard: [
+          [{ text: `Hajmni o'zgartirish (${product.productSize}L)` }],
+          [
+            {
+              text: `Narxni o'zgartirish (${formatPriceWithComma(
+                product.productPrice
+              )} som)`,
+            },
+          ],
+          [{ text: "Orqaga ↩️" }],
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    }
+  );
+}
+
 async function handleUpdate(req, res) {
   try {
     const update = req.body;
@@ -249,16 +341,7 @@ async function handleUpdate(req, res) {
               productSize,
               productPrice,
             });
-            await sendMessage(chatId, "Maxsulot saqlandi ✅", {
-              reply_markup: {
-                keyboard: [
-                  [{ text: "Maxsulot qo'shish ➕" }],
-                  [{ text: "Maxsulotlarimni korish👁️" }],
-                ],
-                resize_keyboard: true,
-                one_time_keyboard: false,
-              },
-            });
+            await homeMenu(chatId);
           } else {
             await sendMessage(chatId, "Xatolik: ma'lumotlar to'liq emas.");
           }
@@ -272,15 +355,23 @@ async function handleUpdate(req, res) {
         userStateById.delete(chatId);
       } else if (data === "prod_confirm_no") {
         userStateById.set(chatId, {});
-        await sendMessage(chatId, "Qaytadan boshlaymiz.", {
-          reply_markup: {
-            keyboard: [
-              [{ text: "Maxsulot qo'shish ➕" }],
-              [{ text: "Maxsulotlarimni korish👁️" }],
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: false,
-          },
+        await homeMenu(chatId);
+      } else if (data.startsWith("plist:")) {
+        const page = parseInt(data.split(":")[1], 10);
+        await showProducts(chatId, page);
+      } else if (data.startsWith("edit:")) {
+        const productId = parseInt(data.split(":")[1], 10);
+        await showEditProductsMenu(chatId);
+        userStateById.set(chatId, {
+          expected: "edit_product_selection",
+          productId,
+        });
+      } else if (data.startsWith("delete:")) {
+        const productId = parseInt(data.split(":")[1], 10);
+        await showDeleteProductsMenu(chatId);
+        userStateById.set(chatId, {
+          expected: "delete_product_selection",
+          productId,
         });
       }
 
@@ -382,25 +473,179 @@ async function handleUpdate(req, res) {
 
       const state = userStateById.get(chatId) || {};
 
-      if (text === "Orqaga qaytish ↩️") {
-        const exp = state.expected;
-        if (exp === "delivery_radius" || exp === null) {
-          userStateById.set(chatId, { expected: "phone" });
-          await askPhone(chatId);
-        } else if (exp === "delivery_radius_custom") {
-          userStateById.set(chatId, { expected: "delivery_radius" });
+      if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
+        if (state.expected && state.expected.includes("edit")) {
           await homeMenu(chatId);
-        } else if (exp === "product_size" || exp === "product_size_custom") {
-          userStateById.set(chatId, { expected: "delivery_radius" });
-          await homeMenu(chatId);
-        } else if (exp === "product_price" || exp === "product_price_custom") {
-          userStateById.set(chatId, { expected: "product_size" });
-          await homeMenu(chatId);
-        } else if (exp === "product_confirm") {
-          userStateById.set(chatId, { expected: "product_price" });
-          await homeMenu(chatId);
+          userStateById.delete(chatId);
         } else {
           await homeMenu(chatId);
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "edit_product_selection") {
+        const products = await models.Product.findAll({
+          where: { chatId },
+          order: [["createdAt", "DESC"]],
+        });
+
+        const selectedIndex = parseInt(text.split(".")[0], 10) - 1;
+
+        if (selectedIndex >= 0 && selectedIndex < products.length) {
+          const selectedProduct = products[selectedIndex];
+          await showProductEditOptions(chatId, selectedProduct.id);
+          userStateById.set(chatId, {
+            expected: "edit_product_option",
+            productId: selectedProduct.id,
+          });
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "delete_product_selection") {
+        const products = await models.Product.findAll({
+          where: { chatId },
+          order: [["createdAt", "DESC"]],
+        });
+
+        const selectedIndex = parseInt(text.split(".")[0], 10) - 1;
+
+        if (selectedIndex >= 0 && selectedIndex < products.length) {
+          const selectedProduct = products[selectedIndex];
+          await models.Product.destroy({ where: { id: selectedProduct.id } });
+          await sendMessage(chatId, "Maxsulot o'chirildi ✅");
+          await showProducts(chatId, 1);
+          userStateById.delete(chatId);
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "edit_product_option") {
+        const productId = state.productId;
+        const product = await models.Product.findByPk(productId);
+
+        if (!product) {
+          await sendMessage(chatId, "Mahsulot topilmadi.");
+          userStateById.delete(chatId);
+          await homeMenu(chatId);
+          res.sendStatus(200);
+          return;
+        }
+
+        if (text.includes("Hajmni o'zgartirish")) {
+          userStateById.set(chatId, {
+            expected: "edit_product_size",
+            productId,
+          });
+          await sendMessage(chatId, "Yangi hajmini kiriting (litrda):", {
+            reply_markup: {
+              keyboard: [
+                [{ text: "5 litr" }, { text: "10 litr" }],
+                [{ text: "15 litr" }, { text: "Boshqa" }],
+                [{ text: "Orqaga ↩️" }],
+              ],
+              resize_keyboard: true,
+            },
+          });
+        } else if (text.includes("Narxni o'zgartirish")) {
+          userStateById.set(chatId, {
+            expected: "edit_product_price",
+            productId,
+          });
+          await sendMessage(chatId, "Yangi narxni kiriting:", {
+            reply_markup: {
+              keyboard: [
+                [{ text: "10,000 som" }, { text: "12,000 som" }],
+                [{ text: "16,000 som" }, { text: "Boshqa narx" }],
+                [{ text: "Orqaga ↩️" }],
+              ],
+              resize_keyboard: true,
+            },
+          });
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "edit_product_size") {
+        const productId = state.productId;
+        let newSize;
+
+        if (text === "Boshqa") {
+          await sendMessage(chatId, "Yangi hajmini kiriting (masalan: 7):");
+          res.sendStatus(200);
+          return;
+        }
+
+        const m = text.match(/^(\d+)\s*l/i);
+        if (m) {
+          newSize = parseInt(m[1], 10);
+        } else if (/^\d+$/.test(text)) {
+          newSize = parseInt(text, 10);
+        }
+
+        if (newSize && newSize > 0) {
+          await models.Product.update(
+            { productSize: newSize },
+            { where: { id: productId } }
+          );
+          await sendMessage(chatId, "Mahsulot hajmi yangilandi ✅");
+          userStateById.delete(chatId);
+          await homeMenu(chatId);
+        } else {
+          await sendMessage(
+            chatId,
+            "Iltimos, to'g'ri hajm kiriting (masalan: 7)"
+          );
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "edit_product_price") {
+        const productId = state.productId;
+        let newPrice;
+
+        if (text === "Boshqa narx") {
+          await sendMessage(
+            chatId,
+            "Yangi narxni kiriting (masalan: 10,000 som):"
+          );
+          res.sendStatus(200);
+          return;
+        }
+
+        const m = text.match(/^\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\s*som)?\s*$/i);
+        if (m) {
+          const normalized = m[1].replace(/,/g, "");
+          newPrice = parseInt(normalized, 10);
+        }
+
+        if (newPrice && newPrice > 0) {
+          if (newPrice > 17000) {
+            await sendMessage(
+              chatId,
+              "Narx 17,000 somdan yuqori bo'lishi mumkin emas"
+            );
+            res.sendStatus(200);
+            return;
+          }
+
+          await models.Product.update(
+            { productPrice: newPrice },
+            { where: { id: productId } }
+          );
+          await sendMessage(chatId, "Mahsulot narxi yangilandi ✅");
+          userStateById.delete(chatId);
+          await homeMenu(chatId);
+        } else {
+          await sendMessage(
+            chatId,
+            "Iltimos, to'g'ri narx kiriting (masalan: 10,000 som)"
+          );
         }
         res.sendStatus(200);
         return;
@@ -419,20 +664,11 @@ async function handleUpdate(req, res) {
               e.message || e
             );
           }
-          await sendMessage(chatId, "Tasdiqlandi ✅", {
-            reply_markup: {
-              keyboard: [
-                [{ text: "Maxsulot qo'shish ➕" }],
-                [{ text: "Maxsulotlarimni korish👁️" }],
-              ],
-              resize_keyboard: true,
-              one_time_keyboard: false,
-            },
-          });
+          await homeMenu(chatId);
           userStateById.delete(chatId);
           res.sendStatus(200);
           return;
-        } else if (text === "boshqa") {
+        } else if (text === "Boshqa") {
           userStateById.set(chatId, { expected: "delivery_radius_custom" });
           await sendMessage(
             chatId,
@@ -458,16 +694,7 @@ async function handleUpdate(req, res) {
                 e.message || e
               );
             }
-            await sendMessage(chatId, "Tasdiqlandi ✅", {
-              reply_markup: {
-                keyboard: [
-                  [{ text: "Maxsulot qo'shish ➕" }],
-                  [{ text: "Maxsulotlarimni korish👁️" }],
-                ],
-                resize_keyboard: true,
-                one_time_keyboard: false,
-              },
-            });
+            await homeMenu(chatId);
             userStateById.delete(chatId);
             res.sendStatus(200);
             return;
@@ -489,16 +716,7 @@ async function handleUpdate(req, res) {
               e.message || e
             );
           }
-          await sendMessage(chatId, "Tasdiqlandi ✅", {
-            reply_markup: {
-              keyboard: [
-                [{ text: "Maxsulot qo'shish ➕" }],
-                [{ text: "Maxsulotlarimni korish👁️" }],
-              ],
-              resize_keyboard: true,
-              one_time_keyboard: false,
-            },
-          });
+          await homeMenu(chatId);
           userStateById.delete(chatId);
           res.sendStatus(200);
           return;
