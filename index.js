@@ -23,13 +23,13 @@ const verificationRouter = require(path.join(
   __dirname,
   "app",
   "routers",
-  "verificatsion.router.js"
+  "verification.routes.js"
 ));
 const usersRouter = require(path.join(
   __dirname,
   "app",
   "routers",
-  "users.router.js"
+  "users.routes.js"
 ));
 
 const app = express();
@@ -66,9 +66,7 @@ app.get("/debug/webhook-info", async (req, res) => {
 
 app.post("/debug/reset-webhook", async (req, res) => {
   try {
-    const publicUrl =
-      process.env.PUBLIC_URL ||
-      `http://localhost:${PORT}`; 
+    const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
     const fullUrl = normalizeUrl(publicUrl, WEBHOOK_PATH);
     const del = await deleteWebhook();
     await new Promise((r) => setTimeout(r, 250));
@@ -80,7 +78,9 @@ app.post("/debug/reset-webhook", async (req, res) => {
         );
         return resp.data;
       } catch (err) {
-        return err.response?.data || { ok: false, error: err.message || String(err) };
+        return (
+          err.response?.data || { ok: false, error: err.message || String(err) }
+        );
       }
     })();
     res.json({ deleted: del, set, fullUrl, webhookPath: WEBHOOK_PATH });
@@ -100,6 +100,3 @@ app.listen(PORT, async () => {
     console.error("Failed to initialize ngrok/webhook:", err.message || err);
   }
 });
-
-
-// /api/product/post/
