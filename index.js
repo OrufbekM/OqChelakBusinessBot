@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const path = require("path");
 
-
 const dbConfig = require(path.join(__dirname, "app", "config", "db.config.js"));
 
 const { handleUpdate, getWebhookPath } = require(path.join(
@@ -20,6 +19,18 @@ const {
   normalizeUrl,
 } = require(path.join(__dirname, "app", "controller", "lib", "axios"));
 const models = require(path.join(__dirname, "app", "models", "index.js"));
+const verificationRouter = require(path.join(
+  __dirname,
+  "app",
+  "routers",
+  "verificatsion.router.js"
+));
+const usersRouter = require(path.join(
+  __dirname,
+  "app",
+  "routers",
+  "users.router.js"
+));
 
 const app = express();
 app.use(express.json());
@@ -28,6 +39,9 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const WEBHOOK_PATH = getWebhookPath();
 
 app.post(WEBHOOK_PATH, handleUpdate);
+
+app.use("/api/verification", verificationRouter);
+app.use("/api/users", usersRouter);
 
 app.get("/", (req, res) => {
   res.json({

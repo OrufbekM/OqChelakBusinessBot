@@ -44,7 +44,7 @@ async function resolveAddress(lat, lon) {
 /**
  *
  * @param {Array|Object} couriersSource Either an array of users or the User model/db object
- * @param {{ latitude: number|string, longitude: number|string, deliveryRadius?: number|null }} customer
+ * @param {{ latitude: number|string, longitude: number|string }} customer
  * @returns {Promise<null|{ courier: { id?: number, latitude: number, longitude: number, deliveryRadius: number }, distanceKm: number, customerAddress: string }>}
  */
 async function findFirstCourierWithinRadius(User, customer) {
@@ -68,14 +68,7 @@ async function findFirstCourierWithinRadius(User, customer) {
     return null;
   }
 
-  const customerRadius =
-    customer?.deliveryRadius === null || customer?.deliveryRadius === undefined
-      ? Infinity
-      : normalizeRadius(customer?.deliveryRadius);
-
-  if (customerRadius === null) {
-    return null;
-  }
+  // Customer delivery radius is not considered; only courier's radius matters.
 
   for (const courierRecord of couriers) {
     const courier =
@@ -92,7 +85,7 @@ async function findFirstCourierWithinRadius(User, customer) {
     if (courierRadius === null) continue;
 
     const distance = haversine(courierCoords, customerCoords);
-    if (distance > courierRadius || distance > customerRadius) continue;
+    if (distance > courierRadius) continue;
 
     const customerAddress =
       (await resolveAddress(customerCoords[0], customerCoords[1])) ||
