@@ -51,14 +51,19 @@ async function showProducts(chatId, page = 1) {
     const where = { chatId };
     const count = await models.Product.count({ where });
     if (!count) {
-      await sendMessage(chatId, "Mahsulotlar ro‘yxati bo‘sh: \n \nIltimos, yangi mahsulot qo‘shish uchun \n“Mahsulot qo‘shish ➕” tugmasini tanlang.", {
-        reply_markup: {
-          keyboard: [
-            [{ text: "Maxsulot qo'shish ➕", callback_data: "add_product" }],[{ text: "Orqaga qaytish ↩️" }]
-          ],
-          resize_keyboard: true
-        },
-      });
+      await sendMessage(
+        chatId,
+        "Mahsulotlar ro‘yxati bo‘sh: \n \nIltimos, yangi mahsulot qo‘shish uchun \n“Mahsulot qo‘shish ➕” tugmasini tanlang.",
+        {
+          reply_markup: {
+            keyboard: [
+              [{ text: "Maxsulot qo'shish ➕", callback_data: "add_product" }],
+              [{ text: "Orqaga qaytish ↩️" }],
+            ],
+            resize_keyboard: true,
+          },
+        }
+      );
       return;
     }
     const totalPages = Math.max(1, Math.ceil(count / limit));
@@ -83,15 +88,25 @@ async function showProducts(chatId, page = 1) {
     const list = rows
       .map(
         (pr) =>
-          `Maxsulotingiz: ${pr.productName || "Sut"}\nnarxi: ${pr.productPrice} som\nhajmi: ${pr.productSize} litr\nqo'shilgan: ${formatUzDate(pr.createdAt)}`
+          `Maxsulotingiz: ${pr.productName || "Sut"}\nnarxi: ${
+            pr.productPrice
+          } som\nhajmi: ${pr.productSize} litr\nqo'shilgan: ${formatUzDate(
+            pr.createdAt
+          )}`
       )
       .join("\n\n");
     const text = `${list}\n\nSahifa: ${p}/${totalPages}`;
     const nav = [];
-    if (p > 1) nav.push({ text: "◀️ Oldingi", callback_data: `plist:${p - 1}` });
-    if (p < totalPages) nav.push({ text: "Keyingi ▶️", callback_data: `plist:${p + 1}` });
+    if (p > 1)
+      nav.push({ text: "◀️ Oldingi", callback_data: `plist:${p - 1}` });
+    if (p < totalPages)
+      nav.push({ text: "Keyingi ▶️", callback_data: `plist:${p + 1}` });
     const reply_markup = nav.length ? { inline_keyboard: [nav] } : undefined;
-    await sendMessage(chatId, text, reply_markup ? { reply_markup } : undefined);
+    await sendMessage(
+      chatId,
+      text,
+      reply_markup ? { reply_markup } : undefined
+    );
   } catch (e) {
     console.error("showProducts failed:", e.message || e);
     await sendMessage(chatId, "Maxsulotlarni ko'rsatishda xatolik yuz berdi.");
@@ -144,7 +159,8 @@ async function askProduct(chatId) {
     reply_markup: {
       keyboard: [
         [{ text: "5 litr" }, { text: "10 litr" }, { text: "15 litr" }],
-        [{ text: "Boshqa" }], [{ text: "Orqaga qaytish ↩️" }]
+        [{ text: "Boshqa" }],
+        [{ text: "Orqaga qaytish ↩️" }],
       ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -153,31 +169,30 @@ async function askProduct(chatId) {
 }
 
 async function askPrice(chatId) {
-  await sendMessage(
-    chatId,
-    "1 litr sut uchun narxni kiriting 💵",
-    {
-      reply_markup: {
-        keyboard: [
-          [
-            { text: "10,000 som" },
-            { text: "12,000 som" },
-            { text: "16,000 som" },
-          ],
-          [{ text: "O'zim narx belgilayman" }],
-          [{ text: "Orqaga qaytish ↩️" }],
+  await sendMessage(chatId, "1 litr sut uchun narxni kiriting 💵", {
+    reply_markup: {
+      keyboard: [
+        [
+          { text: "10,000 som" },
+          { text: "12,000 som" },
+          { text: "16,000 som" },
         ],
-        resize_keyboard: true,
-        one_time_keyboard: false,
-      },
-    }
-  );
+        [{ text: "O'zim narx belgilayman" }],
+        [{ text: "Orqaga qaytish ↩️" }],
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false,
+    },
+  });
 }
 
 async function homeMenu(chatId) {
   await sendMessage(chatId, "Bosh sahifa:", {
     reply_markup: {
-      keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+      keyboard: [
+        [{ text: "Maxsulot qo'shish ➕" }],
+        [{ text: "Maxsulotlarimni korish👁️" }],
+      ],
       resize_keyboard: true,
       one_time_keyboard: false,
     },
@@ -228,10 +243,18 @@ async function handleUpdate(req, res) {
         const productPrice = st.productPrice;
         try {
           if (productSize && productPrice) {
-            await models.Product.create({ chatId, productName: "Sut", productSize, productPrice });
+            await models.Product.create({
+              chatId,
+              productName: "Sut",
+              productSize,
+              productPrice,
+            });
             await sendMessage(chatId, "Maxsulot saqlandi ✅", {
               reply_markup: {
-                keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+                keyboard: [
+                  [{ text: "Maxsulot qo'shish ➕" }],
+                  [{ text: "Maxsulotlarimni korish👁️" }],
+                ],
                 resize_keyboard: true,
                 one_time_keyboard: false,
               },
@@ -241,14 +264,20 @@ async function handleUpdate(req, res) {
           }
         } catch (e) {
           console.error("Sequelize save (product) failed:", e.message || e);
-          await sendMessage(chatId, "Xatolik yuz berdi. Keyinroq urinib ko'ring.");
+          await sendMessage(
+            chatId,
+            "Xatolik yuz berdi. Keyinroq urinib ko'ring."
+          );
         }
         userStateById.delete(chatId);
       } else if (data === "prod_confirm_no") {
         userStateById.set(chatId, {});
         await sendMessage(chatId, "Qaytadan boshlaymiz.", {
           reply_markup: {
-            keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+            keyboard: [
+              [{ text: "Maxsulot qo'shish ➕" }],
+              [{ text: "Maxsulotlarimni korish👁️" }],
+            ],
             resize_keyboard: true,
             one_time_keyboard: false,
           },
@@ -392,7 +421,10 @@ async function handleUpdate(req, res) {
           }
           await sendMessage(chatId, "Tasdiqlandi ✅", {
             reply_markup: {
-              keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+              keyboard: [
+                [{ text: "Maxsulot qo'shish ➕" }],
+                [{ text: "Maxsulotlarimni korish👁️" }],
+              ],
               resize_keyboard: true,
               one_time_keyboard: false,
             },
@@ -428,7 +460,10 @@ async function handleUpdate(req, res) {
             }
             await sendMessage(chatId, "Tasdiqlandi ✅", {
               reply_markup: {
-                keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+                keyboard: [
+                  [{ text: "Maxsulot qo'shish ➕" }],
+                  [{ text: "Maxsulotlarimni korish👁️" }],
+                ],
                 resize_keyboard: true,
                 one_time_keyboard: false,
               },
@@ -456,7 +491,10 @@ async function handleUpdate(req, res) {
           }
           await sendMessage(chatId, "Tasdiqlandi ✅", {
             reply_markup: {
-              keyboard: [[{ text: "Maxsulot qo'shish ➕" }],[{ text: "Maxsulotlarimni korish👁️" }]],
+              keyboard: [
+                [{ text: "Maxsulot qo'shish ➕" }],
+                [{ text: "Maxsulotlarimni korish👁️" }],
+              ],
               resize_keyboard: true,
               one_time_keyboard: false,
             },
@@ -514,7 +552,10 @@ async function handleUpdate(req, res) {
             st.productSize = size;
             st.expected = "product_price";
             userStateById.set(chatId, st);
-            await sendMessage(chatId, `Maxsulot qoshildi ${st.productSize} litr`);
+            await sendMessage(
+              chatId,
+              `Maxsulot qoshildi ${st.productSize} litr`
+            );
             await askPrice(chatId);
             res.sendStatus(200);
             return;
@@ -534,7 +575,10 @@ async function handleUpdate(req, res) {
           res.sendStatus(200);
           return;
         } else {
-          await sendMessage(chatId, "Iltimos to'g'ri son kiriting (masalan: 7)");
+          await sendMessage(
+            chatId,
+            "Iltimos to'g'ri son kiriting (masalan: 7)"
+          );
           res.sendStatus(200);
           return;
         }
@@ -556,7 +600,10 @@ async function handleUpdate(req, res) {
         const price = parseInt(text.replace(/[^\d]/g, ""), 10);
         if (!isNaN(price) && price > 0) {
           if (price > 17000) {
-            await sendMessage(chatId, "qayta narx kiriting maksimal narx miqdori 17,000 som");
+            await sendMessage(
+              chatId,
+              "qayta narx kiriting maksimal narx miqdori 17,000 som"
+            );
             res.sendStatus(200);
             return;
           }
@@ -564,18 +611,27 @@ async function handleUpdate(req, res) {
           st.productPrice = price;
           st.expected = "product_confirm";
           userStateById.set(chatId, st);
-          await sendMessage(chatId, `Maxsulot ma'lumotlari:\nHajmi: ${st.productSize} litr\n1 litr uchun narx: ${st.productPrice} som\n\nTasdiqlaysizmi?`, {
-            reply_markup: {
-              inline_keyboard: [[
-                { text: "Ha ✅", callback_data: "prod_confirm_yes" },
-                { text: "Yo'q ❌", callback_data: "prod_confirm_no" }
-              ]],
-            },
-          });
+          await sendMessage(
+            chatId,
+            `Maxsulot ma'lumotlari:\nHajmi: ${st.productSize} litr\n1 litr uchun narx: ${st.productPrice} som\n\nTasdiqlaysizmi?`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "Ha ✅", callback_data: "prod_confirm_yes" },
+                    { text: "Yo'q ❌", callback_data: "prod_confirm_no" },
+                  ],
+                ],
+              },
+            }
+          );
           res.sendStatus(200);
           return;
         } else {
-          await sendMessage(chatId, "Iltimos, to'g'ri narx tanlang yoki kiriting.");
+          await sendMessage(
+            chatId,
+            "Iltimos, to'g'ri narx tanlang yoki kiriting."
+          );
           res.sendStatus(200);
           return;
         }
@@ -588,24 +644,33 @@ async function handleUpdate(req, res) {
           const price = parseInt(normalized, 10);
           if (!isNaN(price) && price > 0) {
             if (price > 17000) {
-              await sendMessage(chatId, "qayta narx kiriting maksimal narx miqdori 17,000 som");
+              await sendMessage(
+                chatId,
+                "qayta narx kiriting maksimal narx miqdori 17,000 som"
+              );
               res.sendStatus(200);
               return;
             }
-          const st = userStateById.get(chatId) || {};
-          st.productPrice = price;
-          st.expected = "product_confirm";
-          userStateById.set(chatId, st);
-          await sendMessage(chatId, `Maxsulot ma'lumotlari:\nHajmi: ${st.productSize} litr\n1 litr uchun narx: ${st.productPrice} som\n\nTasdiqlaysizmi?`, {
-            reply_markup: {
-              inline_keyboard: [[
-                { text: "Ha ✅", callback_data: "prod_confirm_yes" },
-                { text: "Yo'q ❌", callback_data: "prod_confirm_no" }
-              ]],
-            },
-          });
-          res.sendStatus(200);
-          return;
+            const st = userStateById.get(chatId) || {};
+            st.productPrice = price;
+            st.expected = "product_confirm";
+            userStateById.set(chatId, st);
+            await sendMessage(
+              chatId,
+              `Maxsulot ma'lumotlari:\nHajmi: ${st.productSize} litr\n1 litr uchun narx: ${st.productPrice} som\n\nTasdiqlaysizmi?`,
+              {
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: "Ha ✅", callback_data: "prod_confirm_yes" },
+                      { text: "Yo'q ❌", callback_data: "prod_confirm_no" },
+                    ],
+                  ],
+                },
+              }
+            );
+            res.sendStatus(200);
+            return;
           }
         }
         await sendMessage(
@@ -618,6 +683,7 @@ async function handleUpdate(req, res) {
 
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
+        const telegramId = from.id;
         const fullName = [from.first_name, from.last_name]
           .filter(Boolean)
           .join(" ")
@@ -625,23 +691,55 @@ async function handleUpdate(req, res) {
         const username = from.username || null;
 
         try {
-          await models.User.upsert({
+          const existingUser = await models.User.findOne({
+            where: { telegramId },
+          });
+
+          if (existingUser) {
+            await sendMessage(
+              chatId,
+              `Hisobga kirildi✅:\n\n` +
+                `🆔ID: ${existingUser.telegramId}\n` +
+                `📞Telefon raqamingiz: ${existingUser.phone || "—"}\n` +
+                `👤Ismingiz: ${existingUser.fullName || "—"}`,
+              {
+                reply_markup: {
+                  keyboard: [
+                    [{ text: "Maxsulot qo'shish ➕" }],
+                    [{ text: "Maxsulotlarimni korish👁️" }],
+                  ],
+                  resize_keyboard: true,
+                },
+              }
+            );
+            res.sendStatus(200);
+            return;
+          }
+
+          const newUser = await models.User.create({
+            telegramId,
             chatId,
-            fullName: fullName,
+            fullName,
             username,
           });
-        } catch (e) {
-          console.error("Sequelize upsert (start) failed:", e.message || e);
-        }
 
-        userStateById.set(chatId, { expected: "phone" });
-        await sendMessage(
-          chatId,
-          "Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz."
-        );
-        await askPhone(chatId);
-        res.sendStatus(200);
-        return;
+          userStateById.set(chatId, { expected: "phone" });
+          await sendMessage(
+            chatId,
+            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz.\n\nSizning Telegram ID raqamingiz: ${telegramId}`
+          );
+          await askPhone(chatId);
+          res.sendStatus(200);
+          return;
+        } catch (e) {
+          console.error("Sequelize start handler failed:", e.message || e);
+          await sendMessage(
+            chatId,
+            "Xatolik yuz berdi. Keyinroq urinib ko'ring."
+          );
+          res.sendStatus(200);
+          return;
+        }
       }
 
       if (text === "/help") {

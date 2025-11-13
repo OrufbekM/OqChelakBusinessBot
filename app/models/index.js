@@ -17,7 +17,7 @@ db.Product = require("./product.model")(sequelize, Sequelize);
 
 async function initModels() {
   await sequelize.authenticate();
-  await sequelize.sync({ force: true });
+  await sequelize.sync({ alter: true });
 }
 
 db.initModels = initModels;

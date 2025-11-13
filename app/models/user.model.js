@@ -7,15 +7,18 @@ module.exports = (sequelize, Sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
-      chatId: {
+      telegramId: {
         type: Sequelize.BIGINT,
         allowNull: false,
         unique: true,
       },
+      chatId: {
+        type: Sequelize.BIGINT,
+        allowNull: false,
+      },
       username: {
         type: Sequelize.STRING,
         allowNull: true,
-        unique: false,
       },
       fullName: {
         type: Sequelize.STRING,
@@ -55,5 +58,3 @@ module.exports = (sequelize, Sequelize) => {
 
   return User;
 };
-
-
