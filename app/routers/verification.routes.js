@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../models");
-const { findFirstCourierWithinRadius } = require("../controller/verification.controller");
+const {
+  findFirstCourierWithinRadius,
+  getProducts,
+} = require("../controller/verification.controller");
 
 router.post("/new-order", async (req, res) => {
   try {
@@ -23,5 +26,7 @@ router.post("/new-order", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
+
+router.get("/products", getProducts);
 
 module.exports = router;

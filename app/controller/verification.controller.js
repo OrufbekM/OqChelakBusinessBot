@@ -109,6 +109,56 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
   return null;
 }
 
+async function getProducts(req, res) {
+  try {
+    const { chatId, limit, offset } = req.query;
+
+    const where = {};
+    if (chatId) {
+      where.chatId = BigInt(chatId);
+    }
+
+    const options = {
+      where,
+      order: [["createdAt", "DESC"]],
+    };
+
+    if (limit) {
+      options.limit = parseInt(limit, 10);
+    }
+    if (offset) {
+      options.offset = parseInt(offset, 10);
+    }
+
+    const products = await db.Product.findAll(options);
+    const total = await db.Product.count({ where });
+
+    const formattedProducts = products.map((product) => ({
+      id: product.id,
+      productName: product.productName || "Sut",
+      productPrice: product.productPrice,
+      productSize: product.productSize,
+      chatId: product.chatId.toString(),
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
+    }));
+
+    res.json({
+      ok: true,
+      products: formattedProducts,
+      total,
+      limit: options.limit || null,
+      offset: options.offset || 0,
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: e.message || String(e),
+    });
+  }
+}
+
 module.exports = {
   findFirstCourierWithinRadius,
+  getProducts,
 };
