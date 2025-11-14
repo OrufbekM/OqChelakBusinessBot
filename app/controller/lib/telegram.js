@@ -477,6 +477,66 @@ async function handleUpdate(req, res) {
             },
           }
         );
+      } else if (data === "order_confirm_yes") {
+        const confirmationMessageId = cq.message.message_id;
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: confirmationMessageId,
+          text: "Buyurtma qabul qilindi ✅",
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [] },
+        });
+        // Backward compatibility: previous format didn't include customer chat id.
+      } else if (data.startsWith("order_confirm_yes:")) {
+        const parts = data.split(":");
+        const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
+        // parts[2] is optional orderId, not used here due to missing Order model
+        const confirmationMessageId = cq.message.message_id;
+        // Edit seller's inline message
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: confirmationMessageId,
+          text: "Buyurtma qabul qilindi ✅",
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [] },
+        });
+        // Notify customer
+        if (customerChatId && !Number.isNaN(customerChatId)) {
+          await sendMessage(
+            customerChatId,
+            "✅ Sizning buyurtmangiz qabul qilindi! Sotuvchi hozir tayyorlamoqda."
+          );
+        }
+        // Notify seller
+        await sendMessage(chatId, "👍 Siz buyurtmani qabul qildingiz.");
+      } else if (data === "order_confirm_no") {
+        const confirmationMessageId = cq.message.message_id;
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: confirmationMessageId,
+          text: "Buyurtma bekor qilindi ❌",
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [] },
+        });
+      } else if (data.startsWith("order_confirm_no:")) {
+        const parts = data.split(":");
+        const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
+        const confirmationMessageId = cq.message.message_id;
+        // Edit seller's inline message
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: confirmationMessageId,
+          text: "Buyurtma bekor qilindi ❌",
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [] },
+        });
+        // Notify customer
+        if (customerChatId && !Number.isNaN(customerChatId)) {
+          await sendMessage(
+            customerChatId,
+            "❌ Sizning buyurtmangiz sotuvchi tomonidan rad etildi."
+          );
+        }
       } else if (data === "add_product") {
         userStateById.set(chatId, { expected: "product_size" });
         await askProduct(chatId);
@@ -1249,7 +1309,7 @@ async function handleUpdate(req, res) {
           userStateById.set(chatId, { expected: "phone" });
           await sendMessage(
             chatId,
-            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz.\n\nSizning Telegram ID raqamingiz: ${telegramId}`
+            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz.`
           );
           await askPhone(chatId);
           res.sendStatus(200);

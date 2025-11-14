@@ -97,6 +97,7 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
       customer,
       courier: {
         id: courier?.id,
+        chatId: courier?.chatId,
         latitude: courierCoords[0],
         longitude: courierCoords[1],
         deliveryRadius: courierRadius,
@@ -112,7 +113,6 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
 async function getProducts(req, res) {
   try {
     const { chatId, limit, offset } = req.query;
-
     const where = {};
     if (chatId) {
       where.chatId = BigInt(chatId);
