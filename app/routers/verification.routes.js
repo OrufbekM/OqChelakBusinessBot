@@ -5,13 +5,14 @@ const { findFirstCourierWithinRadius } = require("../controller/verification.con
 
 router.post("/new-order", async (req, res) => {
   try {
-    const { latitude, longitude } = req.body || {};
-    if (latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ ok: false, error: "latitude and longitude are required" });
+    const customer = req.body.customer; 
+    const order = req.body.order || {}; 
+
+    if (!customer || customer.latitude === undefined || customer.longitude === undefined) {
+      return res.status(400).json({ ok: false, error: "Customer latitude and longitude are required" });
     }
 
-    const customer = { latitude, longitude };
-    const result = await findFirstCourierWithinRadius(db.User, customer);
+    const result = await findFirstCourierWithinRadius(db.User, customer, order);
 
     if (!result) {
       return res.status(404).json({ ok: false, error: "No courier found within radius" });
@@ -24,4 +25,3 @@ router.post("/new-order", async (req, res) => {
 });
 
 module.exports = router;
-

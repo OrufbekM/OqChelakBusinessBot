@@ -42,33 +42,23 @@ async function resolveAddress(lat, lon) {
 }
 
 /**
- *
- * @param {Array|Object} couriersSource Either an array of users or the User model/db object
- * @param {{ latitude: number|string, longitude: number|string }} customer
- * @returns {Promise<null|{ courier: { id?: number, latitude: number, longitude: number, deliveryRadius: number }, distanceKm: number, customerAddress: string }>}
+ * Find first courier within radius for a given customer (from another bot)
+ * @param {Object} User - Courier model (db.User)
+ * @param {Object} customer - { id, chatId, username, fullName, latitude, longitude }
+ * @param {Object} order - optional order info { id, items, ... }
+ * @returns {Promise<null|Object>} - returns courier, distance, customer info, order info
  */
-async function findFirstCourierWithinRadius(User, customer) {
-  if (!customer) {
-    return null;
-  }
+async function findFirstCourierWithinRadius(User, customer, order = {}) {
+  if (!customer) return null;
 
   const CourierModel = User ?? db?.User ?? db;
-  if (!CourierModel || typeof CourierModel.findAll !== "function") {
-    return null;
-  }
+  if (!CourierModel || typeof CourierModel.findAll !== "function") return null;
 
   const couriers = await CourierModel.findAll();
-
-  if (!Array.isArray(couriers) || couriers.length === 0) {
-    return null;
-  }
+  if (!Array.isArray(couriers) || couriers.length === 0) return null;
 
   const customerCoords = buildCoordinate(customer);
-  if (!customerCoords) {
-    return null;
-  }
-
-  // Customer delivery radius is not considered; only courier's radius matters.
+  if (!customerCoords) return null;
 
   for (const courierRecord of couriers) {
     const courier =
@@ -96,12 +86,15 @@ async function findFirstCourierWithinRadius(User, customer) {
     console.log(
       [
         "Zakaz keldi! 🛒",
-        `Buyurtma manzili ${customerAddress}`,
+        `Buyurtma bergan: ${customer.fullName || customer.username}`,
+        `Manzil: ${customerAddress}`,
         `Masofa: ${distanceKm} km`,
       ].join("\n")
     );
 
     return {
+      order,
+      customer,
       courier: {
         id: courier?.id,
         latitude: courierCoords[0],
@@ -119,5 +112,3 @@ async function findFirstCourierWithinRadius(User, customer) {
 module.exports = {
   findFirstCourierWithinRadius,
 };
-
-
