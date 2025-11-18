@@ -7,8 +7,12 @@ const {
   reverseGeocodeDetailed,
   formatUzAddress,
 } = require("../../utils/geocode");
+const axios = require("axios");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
+const STATUS_API_BASE =
+  process.env.STATUS_API_BASE ||
+  "https://zymogenic-edmond-lamellately.ngrok-free.dev";
 
 const userStateById = new Map();
 const PAGE_SIZE = 3;
@@ -39,6 +43,71 @@ function formatUzDate(dt) {
   }
 }
 
+// Build order notification text with geocoded address and maps link
+async function buildOrderNotificationText(
+  customerChatId,
+  productName,
+  liters,
+  opts = {}
+) {
+  try {
+    const user = await models.User.findOne({ where: { chatId: customerChatId } });
+    let address = "—";
+    let mapsUrl = "—";
+    const lat = typeof opts.latitude === "number" ? opts.latitude : user?.latitude;
+    const lon = typeof opts.longitude === "number" ? opts.longitude : user?.longitude;
+    if (typeof lat === "number" && typeof lon === "number") {
+      const detailed = await reverseGeocodeDetailed(lat, lon);
+      const formatted = detailed?.address ? formatUzAddress(detailed.address) : null;
+      address = formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
+      mapsUrl = `https://maps.google.com/?q=${lat},${lon}`;
+    }
+    const name = productName || "Milk";
+    const qty = liters ? `${liters}L` : "—";
+    return (
+      `📦 Mahsulot xabari\n\n` +
+      `📦 Mahsulot: ${name}\n` +
+      `📏 Miqdor: ${qty}\n` +
+      `📍 Manzili: ${address}\n` +
+      `🗺️ Lokatsiya: ${mapsUrl}\n\n` +
+      `Buyurtmani qabul qilasizmi?`
+    );
+  } catch (e) {
+    console.error("buildOrderNotificationText failed:", e.message || e);
+    return (
+      `📦 Mahsulot xabari\n\n` +
+      `📦 Mahsulot: ${name}\n` +
+      `📏 Miqdor: ${qty}\n` +
+      `📍 Manzili: ${address}\n` +
+      `🗺️ Lokatsiya: ${mapsUrl}\n\n` +
+      `Buyurtmani qabul qilasizmi?`
+    );
+  }
+}
+
+// Send order request to seller with inline confirm/cancel buttons
+async function notifySellerAboutOrder({
+  sellerChatId,
+  customerChatId,
+  orderId,
+  productName = "Milk",
+  liters,
+  latitude,
+  longitude,
+}) {
+  const text = await buildOrderNotificationText(customerChatId, productName, liters, {
+    latitude,
+    longitude,
+  });
+  const inline_keyboard = [
+    [
+      { text: "Ha ✅", callback_data: `order_confirm_yes:${customerChatId}:${orderId || ''}` },
+      { text: "Yo'q ❌", callback_data: `order_confirm_no:${customerChatId}:${orderId || ''}` },
+    ],
+  ];
+  await sendMessage(sellerChatId, text, { reply_markup: { inline_keyboard } });
+}
+
 function getWebhookPath() {
   if (process.env.WEBHOOK_PATH) return process.env.WEBHOOK_PATH;
   return BOT_TOKEN ? `/webhook/${BOT_TOKEN}` : `/webhook`;
@@ -46,6 +115,39 @@ function getWebhookPath() {
 
 function formatPriceWithComma(price) {
   return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+async function getUserOrders(userId) {
+  try {
+    const url = `${STATUS_API_BASE}/api/status?userId=${encodeURIComponent(
+      userId
+    )}`;
+    const { data } = await axios.get(url, { timeout: 15000 });
+    return data;
+  } catch (e) {
+    console.error("getUserOrders failed:", e.response?.data || e.message || e);
+    return null;
+  }
+}
+
+async function updateOrderStatus(userId, orderId, status) {
+  try {
+    const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(
+      userId
+    )}/order/${encodeURIComponent(orderId)}`;
+    const { data } = await axios.put(
+      url,
+      { status },
+      { timeout: 15000, headers: { "Content-Type": "application/json" } }
+    );
+    return data;
+  } catch (e) {
+    console.error(
+      "updateOrderStatus failed:",
+      e.response?.data || e.message || e
+    );
+    throw e;
+  }
 }
 
 async function showProducts(chatId, page = 1, messageId = null) {
@@ -61,7 +163,8 @@ async function showProducts(chatId, page = 1, messageId = null) {
           reply_markup: {
             keyboard: [
               [{ text: "Maxsulot qo'shish ➕" }],
-              [{ text: "Maxsulotlarimni korish👁️" }],
+              [{ text: "Maxsulotlarimni korish 👁️" }],
+              [{ text: "Buyurtmalarim 📑" }],
             ],
             resize_keyboard: true,
             one_time_keyboard: false,
@@ -271,7 +374,8 @@ async function homeMenu(chatId) {
     reply_markup: {
       keyboard: [
         [{ text: "Maxsulot qo'shish ➕" }],
-        [{ text: "Maxsulotlarimni korish👁️" }],
+        [{ text: "Maxsulotlarimni korish 👁️" }],
+        [{ text: "Buyurtmalarim 📑" }],
       ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -283,7 +387,8 @@ async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   const reply_markup = {
     keyboard: [
       [{ text: "Maxsulot qo'shish ➕" }],
-      [{ text: "Maxsulotlarimni korish👁️" }],
+      [{ text: "Maxsulotlarimni korish 👁️" }],
+      [{ text: "Buyurtmalarim 📑" }],
     ],
     resize_keyboard: true,
     one_time_keyboard: false,
@@ -478,19 +583,12 @@ async function handleUpdate(req, res) {
           }
         );
       } else if (data === "order_confirm_yes") {
-        const confirmationMessageId = cq.message.message_id;
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: confirmationMessageId,
-          text: "Buyurtma qabul qilindi ✅",
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [] },
-        });
+        // legacy no-op: ignore bare confirm without identifiers
         // Backward compatibility: previous format didn't include customer chat id.
       } else if (data.startsWith("order_confirm_yes:")) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
-        // parts[2] is optional orderId, not used here due to missing Order model
+        let orderId = parts[2] ? parseInt(parts[2], 10) : null;
         const confirmationMessageId = cq.message.message_id;
         // Edit seller's inline message
         await telegram.post("/editMessageText", {
@@ -500,29 +598,34 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         });
-        // Notify customer
-        if (customerChatId && !Number.isNaN(customerChatId)) {
-          await sendMessage(
-            customerChatId,
-            "✅ Sizning buyurtmangiz qabul qilindi! Sotuvchi hozir tayyorlamoqda."
-          );
+        // Fallback: if orderId is missing/invalid, pick the most recent pending order
+        if (customerChatId && (!orderId || Number.isNaN(orderId))) {
+          const ordersResp = await getUserOrders(customerChatId);
+          const list = Array.isArray(ordersResp)
+            ? ordersResp
+            : ordersResp?.orders || ordersResp?.data || [];
+          if (Array.isArray(list) && list.length > 0) {
+            const pendingSortedDesc = list
+              .filter((o) => (o.status || "").toLowerCase() === "pending")
+              .sort((a, b) => (b.id || 0) - (a.id || 0));
+            if (pendingSortedDesc.length > 0) {
+              orderId = pendingSortedDesc[0].id;
+            }
+          }
         }
-        // Notify seller
-        await sendMessage(chatId, "👍 Siz buyurtmani qabul qildingiz.");
+        // Accept -> set processing
+        if (customerChatId && orderId && !Number.isNaN(orderId)) {
+          try {
+            await updateOrderStatus(customerChatId, orderId, "processing");
+          } catch (_) {}
+        }
       } else if (data === "order_confirm_no") {
-        const confirmationMessageId = cq.message.message_id;
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: confirmationMessageId,
-          text: "Buyurtma bekor qilindi ❌",
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [] },
-        });
+        // legacy no-op: ignore bare cancel without identifiers
       } else if (data.startsWith("order_confirm_no:")) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
+        let orderId = parts[2] ? parseInt(parts[2], 10) : null;
         const confirmationMessageId = cq.message.message_id;
-        // Edit seller's inline message
         await telegram.post("/editMessageText", {
           chat_id: chatId,
           message_id: confirmationMessageId,
@@ -530,12 +633,36 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         });
-        // Notify customer
+        // Fallback: if orderId is missing/invalid, pick the most recent pending order
+        if (customerChatId && (!orderId || Number.isNaN(orderId))) {
+          const ordersResp = await getUserOrders(customerChatId);
+          const list = Array.isArray(ordersResp)
+            ? ordersResp
+            : ordersResp?.orders || ordersResp?.data || [];
+          if (Array.isArray(list) && list.length > 0) {
+            const pendingSortedDesc = list
+              .filter((o) => (o.status || "").toLowerCase() === "pending")
+              .sort((a, b) => (b.id || 0) - (a.id || 0));
+            if (pendingSortedDesc.length > 0) {
+              orderId = pendingSortedDesc[0].id;
+            }
+          }
+        }
+        // Cancel -> set cancelled and notify customer
+        if (customerChatId && orderId && !Number.isNaN(orderId)) {
+          try {
+            await updateOrderStatus(customerChatId, orderId, "cancelled");
+          } catch (e) {
+            await sendMessage(
+              chatId,
+              `Status yangilashda xatolik ❌ (userId=${customerChatId}, orderId=${orderId}): cancelled`
+            );
+          }
+        } else {
+          await sendMessage(chatId, "Status yangilab bo'lmadi: noto'g'ri identifikatorlar.");
+        }
         if (customerChatId && !Number.isNaN(customerChatId)) {
-          await sendMessage(
-            customerChatId,
-            "❌ Sizning buyurtmangiz sotuvchi tomonidan rad etildi."
-          );
+          //a
         }
       } else if (data === "add_product") {
         userStateById.set(chatId, { expected: "product_size" });
@@ -717,21 +844,17 @@ async function handleUpdate(req, res) {
       } else if (data.startsWith("confirm_delete:")) {
         const parts = data.split(":");
         const productId = parseInt(parts[1], 10);
-        // Handle both old format (productId:messageId) and new format (productId:page:messageId)
         let page = 1;
         let messageId = cq.message.message_id;
         if (parts.length === 3) {
-          // Old format: confirm_delete:productId:messageId
           messageId = parseInt(parts[2], 10);
         } else if (parts.length >= 4) {
-          // New format: confirm_delete:productId:page:messageId
           page = parseInt(parts[2], 10) || 1;
           messageId = parseInt(parts[3], 10);
         }
         const product = await models.Product.findByPk(productId);
         if (product) {
           await models.Product.destroy({ where: { id: productId } });
-          // Go back to products list after deletion
           await showProducts(chatId, page, messageId);
         } else {
           await sendMessage(
@@ -776,6 +899,30 @@ async function handleUpdate(req, res) {
     if (message && message.chat) {
       const chatId = message.chat.id;
       const text = typeof message.text === "string" ? message.text.trim() : "";
+
+      if (
+        text === "/orders" ||
+        text === "Buyurtmalarim 📑" ||
+        text === "Buyurtmalarim" ||
+        text === "Buyurtmalarim🗒️"
+      ) {
+        const orders = await getUserOrders(chatId);
+        if (!orders || (Array.isArray(orders) && orders.length === 0)) {
+          await sendMessage(chatId, "Sizda buyurtmalar topilmadi.");
+          res.sendStatus(200);
+          return;
+        }
+        const list = Array.isArray(orders) ? orders : orders?.orders || [];
+        const formatted = list
+          .map((o) => `#${o.id} — ${o.status}`)
+          .join("\n");
+        await sendMessage(
+          chatId,
+          formatted ? `Buyurtmalar:\n${formatted}` : "Sizda buyurtmalar yo'q."
+        );
+        res.sendStatus(200);
+        return;
+      }
 
       if (message.location && typeof message.location.latitude === "number") {
         const st = userStateById.get(chatId) || {};
@@ -861,6 +1008,87 @@ async function handleUpdate(req, res) {
       }
 
       const state = userStateById.get(chatId) || {};
+
+      if (state.expected === "delivery_radius") {
+        // Parse choices like "2 km", "4 km", "6 km", "8 km", "Boshqa", "Hamma joyga"
+        const lower = (text || "").toLowerCase();
+        if (/(^|\s)hamma\s+joyga($|\s)/i.test(text)) {
+          // Unlimited radius → store as NULL (treated as Infinity in matching)
+          try {
+            await models.User.update(
+              { deliveryRadius: null, allowedLocations: ["all"] },
+              { where: { chatId } }
+            );
+          } catch (e) {
+            console.error("Sequelize update (deliveryRadius=null) failed:", e.message || e);
+          }
+          userStateById.set(chatId, {});
+          await sendHomeMenuWithMessage(chatId, "Yetkazib berish radiusi: Hamma joyga ✅");
+          res.sendStatus(200);
+          return;
+        }
+        if (/^boshqa$/i.test(text)) {
+          userStateById.set(chatId, { expected: "delivery_radius_custom" });
+          await sendMessage(chatId, "Necha km radius? (masalan: 3)", {
+            reply_markup: { remove_keyboard: true },
+          });
+          res.sendStatus(200);
+          return;
+        }
+        const m = text.match(/^(\d+)\s*km$/i) || text.match(/^(\d+)$/);
+        if (m) {
+          const km = parseInt(m[1], 10);
+          if (km > 0) {
+            const meters = km * 1000;
+            try {
+              await models.User.update(
+                { deliveryRadius: meters, allowedLocations: [`${km}km`] },
+                { where: { chatId } }
+              );
+            } catch (e) {
+              console.error("Sequelize update (deliveryRadius) failed:", e.message || e);
+            }
+            userStateById.set(chatId, {});
+            await sendHomeMenuWithMessage(
+              chatId,
+              `Yetkazib berish radiusi o'rnatildi: ${km} km ✅`
+            );
+            res.sendStatus(200);
+            return;
+          }
+        }
+        await sendMessage(chatId, "Iltimos, quyidagilardan birini tanlang: 2 km, 4 km, 6 km, 8 km, Boshqa, Hamma joyga");
+        res.sendStatus(200);
+        return;
+      }
+
+      if (state.expected === "delivery_radius_custom") {
+        const m = text.match(/^(\d+)\s*(?:km)?$/i);
+        if (m) {
+          const km = parseInt(m[1], 10);
+          if (km > 0) {
+            const meters = km * 1000;
+            try {
+              await models.User.update(
+                { deliveryRadius: meters, allowedLocations: [`${km}km`] },
+                { where: { chatId } }
+              );
+            } catch (e) {
+              console.error("Sequelize update (deliveryRadius custom) failed:", e.message || e);
+            }
+            userStateById.set(chatId, {});
+            await sendHomeMenuWithMessage(
+              chatId,
+              `Yetkazib berish radiusi o'rnatildi: ${km} km ✅`
+            );
+            res.sendStatus(200);
+            return;
+          }
+        }
+        await sendMessage(chatId, "Iltimos, to'g'ri km kiriting (masalan: 3)");
+        res.sendStatus(200);
+        return;
+      }
 
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
         await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
@@ -1289,7 +1517,8 @@ async function handleUpdate(req, res) {
                 reply_markup: {
                   keyboard: [
                     [{ text: "Maxsulot qo'shish ➕" }],
-                    [{ text: "Maxsulotlarimni korish👁️" }],
+                    [{ text: "Maxsulotlarimni korish 👁️" }],
+                    [{ text: "Buyurtmalarim �" }],
                   ],
                   resize_keyboard: true,
                 },
@@ -1355,4 +1584,5 @@ module.exports = {
   getWebhookPath,
   handleUpdate,
   sendMessage,
+  notifySellerAboutOrder,
 };
