@@ -110,55 +110,88 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
   return null;
 }
 
-async function getProducts(req, res) {
+async function createCourierOrderRecord({
+  courierChatId,
+  customer = {},
+  order = {},
+  productName,
+  liters,
+  address,
+}) {
   try {
-    const { chatId, limit, offset } = req.query;
-    const where = {};
-    if (chatId) {
-      where.chatId = BigInt(chatId);
+    const CourierOrderModel = db?.CourierOrder;
+    if (!CourierOrderModel || !courierChatId) {
+      return null;
     }
 
-    const options = {
-      where,
-      order: [["createdAt", "DESC"]],
+    const lat = toNumber(customer?.latitude);
+    const lon = toNumber(customer?.longitude);
+    let resolvedAddress = address;
+    if (!resolvedAddress && lat !== null && lon !== null) {
+      resolvedAddress = await resolveAddress(lat, lon);
+    }
+
+    const mapsUrl =
+      lat !== null && lon !== null ? `https://maps.google.com/?q=${lat},${lon}` : null;
+
+    const normalizedStatus = (order?.status || "pending").toString().toLowerCase();
+    const normalizedLiters =
+      liters !== undefined && liters !== null
+        ? Number(liters)
+        : order?.product?.items?.[0]?.quantity !== undefined
+        ? Number(order.product.items[0].quantity)
+        : null;
+
+    const payload = {
+      courierChatId,
+      customerChatId:
+        customer?.chatId || customer?.telegramId || customer?.id || null,
+      orderId:
+        order?.id != null
+          ? String(order.id)
+          : order?.orderId != null
+          ? String(order.orderId)
+          : null,
+      productName: productName || order?.product?.name || "Sut",
+      liters: Number.isFinite(normalizedLiters) ? normalizedLiters : null,
+      address: resolvedAddress || customer?.address || null,
+      latitude: lat,
+      longitude: lon,
+      mapsUrl,
+      phone: customer?.phone || customer?.phoneNumber || null,
+      customerName: customer?.fullName || customer?.username || null,
+      status: normalizedStatus,
+      payload: {
+        order,
+        customer,
+      },
     };
 
-    if (limit) {
-      options.limit = parseInt(limit, 10);
-    }
-    if (offset) {
-      options.offset = parseInt(offset, 10);
+    if (!payload.orderId) {
+      payload.orderId = `${courierChatId}-${Date.now()}`;
     }
 
-    const products = await db.Product.findAll(options);
-    const total = await db.Product.count({ where });
+    const existing =
+      payload.orderId &&
+      (await CourierOrderModel.findOne({
+        where: {
+          courierChatId: payload.courierChatId,
+          orderId: payload.orderId,
+        },
+      }));
 
-    const formattedProducts = products.map((product) => ({
-      id: product.id,
-      productName: product.productName || "Sut",
-      productPrice: product.productPrice,
-      productSize: product.productSize,
-      chatId: product.chatId.toString(),
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
-    }));
+    if (existing) {
+      return await existing.update(payload);
+    }
 
-    res.json({
-      ok: true,
-      products: formattedProducts,
-      total,
-      limit: options.limit || null,
-      offset: options.offset || 0,
-    });
-  } catch (e) {
-    res.status(500).json({
-      ok: false,
-      error: e.message || String(e),
-    });
+    return await CourierOrderModel.create(payload);
+  } catch (error) {
+    console.error("createCourierOrderRecord failed:", error.message || error);
+    return null;
   }
 }
 
 module.exports = {
   findFirstCourierWithinRadius,
-  getProducts,
+  createCourierOrderRecord,
 };

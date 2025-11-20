@@ -13,7 +13,7 @@ db.Sequelize = Sequelize;
 db.sequelize = sequelize;
 
 db.User = require("./user.model")(sequelize, Sequelize);
-db.Product = require("./product.model")(sequelize, Sequelize);
+db.CourierOrder = require("./courierOrder.model")(sequelize, Sequelize);
 
 async function initModels() {
   await sequelize.authenticate();

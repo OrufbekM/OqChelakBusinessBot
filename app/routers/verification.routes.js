@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require("../models");
 const {
   findFirstCourierWithinRadius,
-  getProducts,
+  createCourierOrderRecord,
 } = require("../controller/verification.controller");
 const { notifySellerAboutOrder } = require("../controller/lib/telegram");
 
@@ -45,6 +45,15 @@ router.post("/new-order", async (req, res) => {
         latitude: customer.latitude,
         longitude: customer.longitude,
       });
+
+      await createCourierOrderRecord({
+        courierChatId: result.courier.chatId,
+        customer,
+        order,
+        productName,
+        liters,
+        address: result.customerAddress,
+      });
     }
 
     res.json({ ok: true, ...result });
@@ -52,8 +61,6 @@ router.post("/new-order", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
-
-router.get("/products", getProducts);
 
 module.exports = router;
 
