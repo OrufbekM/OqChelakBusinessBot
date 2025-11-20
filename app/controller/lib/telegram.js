@@ -226,48 +226,52 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
     const endIndex = Math.min(startIndex + ORDERS_PER_PAGE, allOrders.length);
     const pageOrders = allOrders.slice(startIndex, endIndex);
 
-    const orderLines = pageOrders.map((order, idx) => {
-      const globalIndex = startIndex + idx + 1;
-      const productName = order.productName || "Mahsulot nomi topilmadi";
-      const liters = order.liters !== null && order.liters !== undefined 
-        ? `${order.liters}` 
-        : "";
-      const litrText = liters ? `${liters} litr` : "Miqdori topilmadi";
-      return `${globalIndex}. ${productName} ${litrText}`.trim();
+    const orderLines = pageOrders.map((order) => {
+      const name = order.productName || "Mahsulot nomi topilmadi";
+      const liters = (order.liters !== null && order.liters !== undefined)
+        ? Number(order.liters).toFixed(1)
+        : "—";
+      const addr = order.address || "—";
+      return `${name}— ${liters} L (${addr})`;
     });
 
-    const listText = `Buyurtmalar Ro'yhati:\n\n${orderLines.join("\n")}`;
+    const listText = `Buyurtmalar Ro'yhati:\n${orderLines.join("\n")}`;
 
-    // Build inline keyboard with pagination
+    // Build inline keyboard with pagination (mobile-friendly)
     const inline_keyboard = [];
-    const paginationRow = [];
 
-    // Previous page button (◀️)
-    if (currentPage > 1) {
-      paginationRow.push({
-        text: "◀️",
-        callback_data: `courier_orders_page:${currentPage - 1}`,
-      });
-    }
-
+    // Numbered order buttons: max 5 per row for compact, symmetric layout
+    const numberButtons = [];
     for (let i = 0; i < pageOrders.length; i++) {
       const order = pageOrders[i];
-      paginationRow.push({
+      numberButtons.push({
         text: `${i + 1}`,
         callback_data: `courier_order_view:${order.id}`,
       });
     }
+    // chunk into rows of 5
+    for (let i = 0; i < numberButtons.length; i += 5) {
+      inline_keyboard.push(numberButtons.slice(i, i + 5));
+    }
 
-    // Next page button (▶️)
+    // Navigation row: Prev / Close / Next
+    const navRow = [];
+    if (currentPage > 1) {
+      navRow.push({
+        text: "◀️",
+        callback_data: `courier_orders_page:${currentPage - 1}`,
+      });
+    }
+    // Close button always visible to dismiss the list message
+    navRow.push({ text: "❌", callback_data: "courier_orders_close" });
     if (currentPage < totalPages) {
-      paginationRow.push({
+      navRow.push({
         text: "▶️",
         callback_data: `courier_orders_page:${currentPage + 1}`,
       });
     }
-
-    if (paginationRow.length > 0) {
-      inline_keyboard.push(paginationRow);
+    if (navRow.length > 0) {
+      inline_keyboard.push(navRow);
     }
 
     const replyMarkup = {
@@ -275,13 +279,21 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
     };
 
     if (messageId) {
-      await telegram.post("/editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: listText,
-        parse_mode: "HTML",
-        reply_markup: replyMarkup,
-      });
+      try {
+        await telegram.post("/editMessageText", {
+          chat_id: chatId,
+          message_id: messageId,
+          text: listText,
+          parse_mode: "HTML",
+          reply_markup: replyMarkup,
+        });
+      } catch (e) {
+        // If editing fails (e.g., message deleted), send a fresh one
+        const newMessageId = await sendMessage(chatId, listText, { reply_markup: replyMarkup });
+        if (newMessageId) {
+          userStateById.set(chatId, { ...userStateById.get(chatId), ordersListMessageId: newMessageId });
+        }
+      }
     } else {
       const newMessageId = await sendMessage(chatId, listText, { reply_markup: replyMarkup });
       // Store messageId for future edits
@@ -336,6 +348,14 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
       {
         text: "Orqaga ↩️",
         callback_data: `courier_orders_back:${ordersListMessageId || ''}`,
+      },
+    ]);
+
+    // Close button to remove this detail message
+    inline_keyboard.push([
+      {
+        text: "❌",
+        callback_data: "courier_detail_close",
       },
     ]);
 
@@ -813,6 +833,33 @@ async function handleUpdate(req, res) {
           });
         } catch (e) {
           console.error("Failed to delete detail message:", e.message || e);
+        }
+      } else if (data === "courier_detail_close") {
+        // Delete the currently opened detail message
+        const detailMessageId = cq.message.message_id;
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: detailMessageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete detail message:", e.message || e);
+        }
+      } else if (data === "courier_orders_close") {
+        // Close the orders list message and clear state
+        const listMessageId = cq.message.message_id;
+        try {
+          await telegram.post("/deleteMessage",  {
+            chat_id: chatId,
+            message_id: listMessageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete orders list message:", e.message || e);
+        }
+        const st = userStateById.get(chatId) || {};
+        if (st.ordersListMessageId) {
+          delete st.ordersListMessageId;
+          userStateById.set(chatId, st);
         }
       }
 
