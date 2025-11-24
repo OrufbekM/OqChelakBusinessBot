@@ -75,12 +75,16 @@ function toNumericId(value) {
   if (value === null || value === undefined) {
     return null;
   }
-  const trimmed = String(value).trim();
-  if (!/^\d+$/.test(trimmed)) {
-    return null;
+
+  const str = String(value).trim();
+
+  // If it's a pure number, use it directly
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    return Number.isFinite(num) ? num : null;
   }
-  const num = Number(trimmed);
-  return Number.isFinite(num) ? num : null;
+
+  return null;
 }
 
 function formatUzDate(dt) {
@@ -124,23 +128,26 @@ async function buildOrderNotificationText(
   const qty = liters ? `${liters}L` : "—";
 
   try {
-    const user = await models.User.findOne({ where: { chatId: customerChatId } });
+    const user = await models.User.findOne({
+      where: { chatId: customerChatId },
+    });
     lat = typeof opts.latitude === "number" ? opts.latitude : user?.latitude;
     lon = typeof opts.longitude === "number" ? opts.longitude : user?.longitude;
 
     if (typeof lat === "number" && typeof lon === "number") {
       const detailed = await reverseGeocodeDetailed(lat, lon);
-      const formatted = detailed?.address ? formatUzAddress(detailed.address) : null;
-      address = formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
+      const formatted = detailed?.address
+        ? formatUzAddress(detailed.address)
+        : null;
+      address =
+        formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
       mapsUrl = `https://maps.google.com/?q=${lat},${lon}`;
     }
   } catch (e) {
     console.error("buildOrderNotificationText failed:", e.message || e);
   }
 
-  locationText = `<a href="${escapeHtml(
-    mapsUrl
-  )}">Ko'rish uchun bosing</a>`;
+  locationText = `<a href="${escapeHtml(mapsUrl)}">Ko'rish uchun bosing</a>`;
 
   return (
     `📦 Mahsulot xabari\n\n` +
@@ -162,14 +169,25 @@ async function notifySellerAboutOrder({
   latitude,
   longitude,
 }) {
-  const text = await buildOrderNotificationText(customerChatId, productName, liters, {
-    latitude,
-    longitude,
-  });
+  const text = await buildOrderNotificationText(
+    customerChatId,
+    productName,
+    liters,
+    {
+      latitude,
+      longitude,
+    }
+  );
   const inline_keyboard = [
     [
-      { text: "Ha ✅", callback_data: `order_confirm_yes:${customerChatId}:${orderId || ''}` },
-      { text: "Yo'q ❌", callback_data: `order_confirm_no:${customerChatId}:${orderId || ''}` },
+      {
+        text: "Ha ✅",
+        callback_data: `order_confirm_yes:${customerChatId}:${orderId || ""}`,
+      },
+      {
+        text: "Yo'q ❌",
+        callback_data: `order_confirm_no:${customerChatId}:${orderId || ""}`,
+      },
     ],
   ];
   await sendMessage(sellerChatId, text, { reply_markup: { inline_keyboard } });
@@ -205,7 +223,8 @@ function beautifyStatus(status) {
 function getCourierOrderUniqueKey(order = {}) {
   const externalId = resolveExternalOrderId(order);
   if (externalId) {
-    const customerId = resolveCustomerChatId(order) || order.customerChatId || "";
+    const customerId =
+      resolveCustomerChatId(order) || order.customerChatId || "";
     return `ext:${customerId}:${externalId}`;
   }
   if (order.orderId) {
@@ -232,9 +251,11 @@ function formatCourierOrderForMessage(order, showQuestion = true) {
   const phoneLine = `📞 Telefon: ${phone}`;
   const customerLine = `👤 Mijoz: ${customerName}`;
   let locationLine = "🗺️ Lokatsiya: —";
-  const mapsUrl = order.mapsUrl || (order.latitude && order.longitude
-    ? `https://maps.google.com/?q=${order.latitude},${order.longitude}`
-    : null);
+  const mapsUrl =
+    order.mapsUrl ||
+    (order.latitude && order.longitude
+      ? `https://maps.google.com/?q=${order.latitude},${order.longitude}`
+      : null);
   if (mapsUrl) {
     locationLine = `🗺️ Lokatsiya: <a href="${escapeHtml(
       mapsUrl
@@ -275,7 +296,7 @@ async function getCourierOrdersByChatId(chatId, limit = null) {
 async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
   try {
     const allOrders = await getCourierOrdersByChatId(chatId);
-    
+
     if (!allOrders || allOrders.length === 0) {
       const text = "Sizda buyurtmalar topilmadi.";
       if (messageId) {
@@ -309,14 +330,18 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
     const totalPages = Math.ceil(uniqueOrders.length / ORDERS_PER_PAGE);
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * ORDERS_PER_PAGE;
-    const endIndex = Math.min(startIndex + ORDERS_PER_PAGE, uniqueOrders.length);
+    const endIndex = Math.min(
+      startIndex + ORDERS_PER_PAGE,
+      uniqueOrders.length
+    );
     const pageOrders = uniqueOrders.slice(startIndex, endIndex);
 
     const orderLines = pageOrders.map((order) => {
       const name = order.productName || "Mahsulot nomi topilmadi";
-      const liters = (order.liters !== null && order.liters !== undefined)
-        ? Number(order.liters).toFixed(1)
-        : "—";
+      const liters =
+        order.liters !== null && order.liters !== undefined
+          ? Number(order.liters).toFixed(1)
+          : "—";
       const addr = order.address || "—";
       return `${name}— ${liters} L (${addr})`;
     });
@@ -375,16 +400,26 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
         });
       } catch (e) {
         // If editing fails (e.g., message deleted), send a fresh one
-        const newMessageId = await sendMessage(chatId, listText, { reply_markup: replyMarkup });
+        const newMessageId = await sendMessage(chatId, listText, {
+          reply_markup: replyMarkup,
+        });
         if (newMessageId) {
-          userStateById.set(chatId, { ...userStateById.get(chatId), ordersListMessageId: newMessageId });
+          userStateById.set(chatId, {
+            ...userStateById.get(chatId),
+            ordersListMessageId: newMessageId,
+          });
         }
       }
     } else {
-      const newMessageId = await sendMessage(chatId, listText, { reply_markup: replyMarkup });
+      const newMessageId = await sendMessage(chatId, listText, {
+        reply_markup: replyMarkup,
+      });
       // Store messageId for future edits
       if (newMessageId) {
-        userStateById.set(chatId, { ...userStateById.get(chatId), ordersListMessageId: newMessageId });
+        userStateById.set(chatId, {
+          ...userStateById.get(chatId),
+          ordersListMessageId: newMessageId,
+        });
       }
     }
   } catch (e) {
@@ -394,10 +429,14 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
 }
 
 // Send detailed view of a specific order
-async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = null) {
+async function sendCourierOrderDetails(
+  chatId,
+  orderId,
+  ordersListMessageId = null
+) {
   try {
     const order = await models.CourierOrder.findByPk(orderId);
-    
+
     if (!order) {
       await sendMessage(chatId, "Buyurtma topilmadi.");
       return;
@@ -405,11 +444,19 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
 
     // Get global order number
     const allOrders = await getCourierOrdersByChatId(chatId);
-    const orderIndex = allOrders.findIndex(o => o.id === orderId);
-    const orderNumber = orderIndex !== -1 ? `${orderIndex + 1}. ${order.productName || "Mahsulot"} ${order.liters ? `${order.liters}L` : ""}` : "";
+    const orderIndex = allOrders.findIndex((o) => o.id === orderId);
+    const orderNumber =
+      orderIndex !== -1
+        ? `${orderIndex + 1}. ${order.productName || "Mahsulot"} ${
+            order.liters ? `${order.liters}L` : ""
+          }`
+        : "";
 
     // Format order details
-    const orderText = formatCourierOrderForMessage(order, order.status !== "completed");
+    const orderText = formatCourierOrderForMessage(
+      order,
+      order.status !== "completed"
+    );
     const fullText = orderNumber ? `${orderNumber}\n\n${orderText}` : orderText;
 
     // Build inline keyboard
@@ -420,11 +467,15 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
       inline_keyboard.push([
         {
           text: "Ha ✅",
-          callback_data: `order_delivered:${order.id}:${ordersListMessageId || ''}`,
+          callback_data: `order_delivered:${order.id}:${
+            ordersListMessageId || ""
+          }`,
         },
         {
           text: "Yo'q ❌",
-          callback_data: `order_not_delivered:${order.id}:${ordersListMessageId || ''}`,
+          callback_data: `order_not_delivered:${order.id}:${
+            ordersListMessageId || ""
+          }`,
         },
       ]);
     }
@@ -433,7 +484,7 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
     inline_keyboard.push([
       {
         text: "Orqaga ↩️",
-        callback_data: `courier_orders_back:${ordersListMessageId || ''}`,
+        callback_data: `courier_orders_back:${ordersListMessageId || ""}`,
       },
     ]);
 
@@ -444,7 +495,10 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
     await sendMessage(chatId, fullText, { reply_markup: replyMarkup });
   } catch (e) {
     console.error("sendCourierOrderDetails failed:", e.message || e);
-    await sendMessage(chatId, "Buyurtma ma'lumotlarini ko'rsatishda xatolik yuz berdi.");
+    await sendMessage(
+      chatId,
+      "Buyurtma ma'lumotlarini ko'rsatishda xatolik yuz berdi."
+    );
   }
 }
 
@@ -491,34 +545,40 @@ async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
     const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(
       userId
     )}/order/${encodeURIComponent(orderId)}`;
-    
+
     // Prepare the update data
     const updateData = { status };
-    
+
     // If status is completed and we have a courier phone number, include it in the update
-    if (status === 'completed' && courierPhone) {
+    if (status === "completed" && courierPhone) {
       updateData.phoneNumber = courierPhone;
-      
+
       // Also send to the specified webhook URL
       try {
-        await axios.post('https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/', {
-          orderId,
-          phoneNumber: courierPhone
-        }, { 
-          timeout: 10000,
-          headers: { "Content-Type": "application/json" }
-        });
+        await axios.post(
+          "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
+          {
+            orderId,
+            phoneNumber: courierPhone,
+          },
+          {
+            timeout: 10000,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       } catch (webhookError) {
-        console.error('Failed to send courier phone to webhook:', webhookError.message || webhookError);
+        console.error(
+          "Failed to send courier phone to webhook:",
+          webhookError.message || webhookError
+        );
         // Don't fail the whole operation if webhook fails
       }
     }
-    
-    const { data } = await axios.put(
-      url,
-      updateData,
-      { timeout: 15000, headers: { "Content-Type": "application/json" } }
-    );
+
+    const { data } = await axios.put(url, updateData, {
+      timeout: 15000,
+      headers: { "Content-Type": "application/json" },
+    });
     return data;
   } catch (e) {
     console.error(
@@ -528,7 +588,6 @@ async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
     throw e;
   }
 }
-
 
 async function sendMessage(chatId, text, extra) {
   if (!BOT_TOKEN) {
@@ -572,13 +631,10 @@ async function askLocation(chatId) {
   });
 }
 
-
 async function homeMenu(chatId) {
   await sendMessage(chatId, "Bosh sahifa:", {
     reply_markup: {
-      keyboard: [
-        [{ text: "Buyurtmalarim 📑" }],
-      ],
+      keyboard: [[{ text: "Buyurtmalarim 📑" }]],
       resize_keyboard: true,
       one_time_keyboard: false,
     },
@@ -587,9 +643,7 @@ async function homeMenu(chatId) {
 
 async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   const reply_markup = {
-    keyboard: [
-      [{ text: "Buyurtmalarim 📑" }],
-    ],
+    keyboard: [[{ text: "Buyurtmalarim 📑" }]],
     resize_keyboard: true,
     one_time_keyboard: false,
   };
@@ -615,7 +669,6 @@ async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   }
 }
 
-
 async function handleUpdate(req, res) {
   try {
     const update = req.body;
@@ -637,9 +690,11 @@ async function handleUpdate(req, res) {
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
         const rawOrderId = parts[2] || null;
         let resolvedOrderNumber =
-          rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
+          rawOrderId && /^\d+$/.test(rawOrderId)
+            ? parseInt(rawOrderId, 10)
+            : null;
         const confirmationMessageId = cq.message.message_id;
-        
+
         // Edit seller's inline message
         await telegram.post("/editMessageText", {
           chat_id: chatId,
@@ -648,14 +703,14 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         });
-        
+
         // Get order details from message text
         const messageText = cq.message?.text || "";
         let productName = "Sut";
         let liters = null;
         let latitude = null;
         let longitude = null;
-        
+
         // Parse product name and liters from message
         const productMatch = messageText.match(/📦 Mahsulot: (.+)/);
         if (productMatch) {
@@ -665,10 +720,13 @@ async function handleUpdate(req, res) {
         if (qtyMatch) {
           liters = parseFloat(qtyMatch[1]);
         }
-        
+
         // Fallback: if orderId is missing/invalid, pick the most recent pending order
         let orderDetails = null;
-        if (customerChatId && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
+        if (
+          customerChatId &&
+          (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
+        ) {
           const ordersResp = await getUserOrders(customerChatId);
           const list = Array.isArray(ordersResp)
             ? ordersResp
@@ -683,11 +741,13 @@ async function handleUpdate(req, res) {
             }
           }
         }
-        
+
         // Get customer information
         let customer = null;
         if (customerChatId) {
-          const customerUser = await models.User.findOne({ where: { chatId: customerChatId } });
+          const customerUser = await models.User.findOne({
+            where: { chatId: customerChatId },
+          });
           if (customerUser) {
             customer = {
               chatId: customerChatId,
@@ -706,7 +766,7 @@ async function handleUpdate(req, res) {
             }
           }
         }
-        
+
         // If order details from API, use those coordinates
         if (orderDetails) {
           if (orderDetails.latitude && orderDetails.longitude) {
@@ -720,37 +780,44 @@ async function handleUpdate(req, res) {
             liters = Number(orderDetails.product.items[0].quantity);
           }
         }
-        
+
         const normalizedOrderId =
           rawOrderId ||
           (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
             ? String(resolvedOrderNumber)
             : null);
-        
+
         // Check if order already exists in CourierOrder
-        const existingOrder = normalizedOrderId && customerChatId
-          ? await models.CourierOrder.findOne({
-              where: {
-                courierChatId: chatId,
-                orderId: normalizedOrderId,
-                customerChatId: customerChatId,
-              },
-            })
-          : null;
-        
+        const existingOrder =
+          normalizedOrderId && customerChatId
+            ? await models.CourierOrder.findOne({
+                where: {
+                  courierChatId: chatId,
+                  orderId: normalizedOrderId,
+                  customerChatId: customerChatId,
+                },
+              })
+            : null;
+
         if (!existingOrder && customer) {
           // Create new CourierOrder record if it doesn't exist
           try {
             await createCourierOrderRecord({
               courierChatId: chatId,
               customer,
-              order: orderDetails || { id: normalizedOrderId, status: "processing" },
+              order: orderDetails || {
+                id: normalizedOrderId,
+                status: "processing",
+              },
               productName,
               liters,
               address: null, // Will be resolved by createCourierOrderRecord
             });
           } catch (error) {
-            console.error("Failed to create courier order record:", error.message || error);
+            console.error(
+              "Failed to create courier order record:",
+              error.message || error
+            );
           }
         } else if (existingOrder) {
           // Update existing order status
@@ -761,13 +828,17 @@ async function handleUpdate(req, res) {
             status: "processing",
           });
         }
-        
+
         // Accept -> set processing in external API (only if numeric order id available)
         const numericResolvedOrderId =
           toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
         if (customerChatId && numericResolvedOrderId !== null) {
           try {
-            await updateOrderStatus(customerChatId, numericResolvedOrderId, "processing");
+            await updateOrderStatus(
+              customerChatId,
+              numericResolvedOrderId,
+              "processing"
+            );
           } catch (_) {}
         }
 
@@ -781,7 +852,9 @@ async function handleUpdate(req, res) {
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
         const rawOrderId = parts[2] || null;
         let resolvedOrderNumber =
-          rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
+          rawOrderId && /^\d+$/.test(rawOrderId)
+            ? parseInt(rawOrderId, 10)
+            : null;
         const confirmationMessageId = cq.message.message_id;
         await telegram.post("/editMessageText", {
           chat_id: chatId,
@@ -790,7 +863,10 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         });
-        if (customerChatId && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
+        if (
+          customerChatId &&
+          (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
+        ) {
           const ordersResp = await getUserOrders(customerChatId);
           const list = Array.isArray(ordersResp)
             ? ordersResp
@@ -855,15 +931,26 @@ async function handleUpdate(req, res) {
               );
               reassigned = true;
             } catch (err) {
-              console.error("Failed to forward order to next courier:", err.message || err);
+              console.error(
+                "Failed to forward order to next courier:",
+                err.message || err
+              );
             }
           }
         }
 
         if (!reassigned) {
-          if (customerChatId && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
+          if (
+            customerChatId &&
+            resolvedOrderNumber &&
+            !Number.isNaN(resolvedOrderNumber)
+          ) {
             try {
-              await updateOrderStatus(customerChatId, resolvedOrderNumber, "cancelled");
+              await updateOrderStatus(
+                customerChatId,
+                resolvedOrderNumber,
+                "cancelled"
+              );
             } catch (e) {
               await sendMessage(
                 chatId,
@@ -871,7 +958,10 @@ async function handleUpdate(req, res) {
               );
             }
           } else {
-            await sendMessage(chatId, "Status yangilab bo'lmadi: noto'g'ri identifikatorlar.");
+            await sendMessage(
+              chatId,
+              "Status yangilab bo'lmadi: noto'g'ri identifikatorlar."
+            );
           }
 
           if (normalizedOrderId) {
@@ -899,89 +989,240 @@ async function handleUpdate(req, res) {
         const ordersListMessageId = cq.message.message_id; // Store the list message ID
         await sendCourierOrderDetails(chatId, orderDbId, ordersListMessageId);
       } else if (data.startsWith("order_delivered:")) {
-        // Order delivered - set status to completed
         const parts = data.split(":");
         const orderDbId = parseInt(parts[1], 10);
         const ordersListMessageId = parts[2] ? parseInt(parts[2], 10) : null;
         const messageId = cq.message.message_id;
-        
+
         try {
           const order = await models.CourierOrder.findByPk(orderDbId);
           if (order) {
             const plainOrder =
-              typeof order.get === "function" ? order.get({ plain: true }) : order;
-            let externalUserId = resolveCustomerChatId(plainOrder);
-            let externalOrderId =
-              resolveExternalOrderId(plainOrder) || plainOrder.orderId || null;
+              typeof order.get === "function"
+                ? order.get({ plain: true })
+                : order;
 
-            const assignmentSnapshot =
-              plainOrder.orderId ? getOrderAssignment(plainOrder.orderId) : null;
-            if (assignmentSnapshot) {
-              const snapshotCustomer = assignmentSnapshot.customer || {};
-              if (!externalUserId) {
-                externalUserId =
-                  snapshotCustomer.chatId ||
-                  snapshotCustomer.telegramId ||
-                  snapshotCustomer.id ||
-                  null;
-              }
-              if (!externalOrderId) {
-                const snapshotOrder = assignmentSnapshot.order || {};
-                externalOrderId =
-                  snapshotOrder.id != null
-                    ? snapshotOrder.id
-                    : snapshotOrder.orderId != null
-                    ? snapshotOrder.orderId
-                    : externalOrderId;
+            console.log("Processing order delivery for orderDbId:", orderDbId);
+            console.log(
+              "Plain order data:",
+              JSON.stringify(plainOrder, null, 2)
+            );
+
+            // GET THE ACTUAL ORDER ID
+            let externalOrderId =
+              plainOrder.orderId || plainOrder.externalOrderId || null;
+
+            // If it's a temporary ID, try to get the real order ID from the API
+            if (externalOrderId && externalOrderId.startsWith("tmp-")) {
+              console.log(
+                "Found temporary order ID, fetching real order ID from API..."
+              );
+
+              const customerChatId =
+                resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
+              if (customerChatId) {
+                try {
+                  const ordersResp = await getUserOrders(customerChatId);
+                  const ordersList = Array.isArray(ordersResp)
+                    ? ordersResp
+                    : ordersResp?.data || [];
+
+                  // Find the most recent processing order for this customer
+                  const processingOrders = ordersList.filter(
+                    (o) => o.status === "processing"
+                  );
+                  if (processingOrders.length > 0) {
+                    processingOrders.sort((a, b) => b.id - a.id);
+                    externalOrderId = String(processingOrders[0].id);
+                    console.log(
+                      "Found real order ID from API:",
+                      externalOrderId
+                    );
+                  }
+                } catch (apiError) {
+                  console.error(
+                    "Failed to fetch orders from API:",
+                    apiError.message || apiError
+                  );
+                }
               }
             }
 
-            const nextOrderId = externalOrderId || plainOrder.orderId || null;
+            const externalUserId =
+              resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
             const numericExternalOrderId = toNumericId(externalOrderId);
 
+            console.log(
+              "Final IDs - externalOrderId:",
+              externalOrderId,
+              "numericExternalOrderId:",
+              numericExternalOrderId,
+              "externalUserId:",
+              externalUserId
+            );
+
+            // Update order status to completed in our database
             await models.CourierOrder.update(
               {
                 status: "completed",
-                orderId: nextOrderId,
+                orderId: externalOrderId,
               },
               { where: { id: orderDbId } }
             );
-            
+
             // Get courier's phone number
-            let courierPhone = null;
+            let sellerPhone = null;
             try {
-              const courier = await models.User.findOne({
+              const currentUser = await models.User.findOne({
                 where: { chatId: chatId },
-                attributes: ['phone'],
-                raw: true
+                attributes: ["phone"],
+                raw: true,
               });
-              courierPhone = courier?.phone;
+              sellerPhone = currentUser?.phone;
+              console.log("Seller phone found:", sellerPhone);
             } catch (e) {
-              console.error("Failed to fetch courier's phone:", e.message || e);
+              console.error(
+                "Failed to fetch current user's phone:",
+                e.message || e
+              );
             }
-            
-            // Update external API using the best identifiers we have
+
+            // Update external API - Order status to completed USING PUT METHOD
             if (externalUserId && numericExternalOrderId !== null) {
               try {
-                await updateOrderStatus(externalUserId, numericExternalOrderId, "completed", courierPhone);
+                console.log(
+                  `Making PUT request to: https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/user/${externalUserId}/order/${numericExternalOrderId}`
+                );
+                console.log("Request body:", { status: "completed" });
+
+                const statusResponse = await axios.put(
+                  `https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/user/${externalUserId}/order/${numericExternalOrderId}`,
+                  {
+                    status: "completed",
+                  },
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    timeout: 10000,
+                  }
+                );
+                console.log(
+                  "✅ Order status update API response:",
+                  JSON.stringify(statusResponse.data, null, 2)
+                );
+
+                // Check if the update was successful
+                if (
+                  statusResponse.data &&
+                  statusResponse.data.status === "completed"
+                ) {
+                  console.log(
+                    "✅ SUCCESS: Order status changed to completed in API"
+                  );
+                } else {
+                  console.log(
+                    "❌ API response doesn't show completed status:",
+                    statusResponse.data
+                  );
+                }
               } catch (e) {
-                console.error("Failed to update order status in external API:", e.message || e);
+                console.error(
+                  "❌ Failed to update order status in external API:",
+                  e.message || e
+                );
+                if (e.response) {
+                  console.error("API response error data:", e.response.data);
+                  console.error("API response status:", e.response.status);
+                  console.error("API response headers:", e.response.headers);
+                }
               }
+            } else {
+              console.warn(
+                "❌ Cannot update order status - missing externalUserId or numericExternalOrderId:",
+                {
+                  externalUserId: externalUserId,
+                  numericExternalOrderId: numericExternalOrderId,
+                }
+              );
             }
 
-            const assignmentKey =
-              plainOrder.orderId || externalOrderId || nextOrderId || null;
-            if (assignmentKey) {
-              clearOrderAssignment(String(assignmentKey));
+            // Send seller info USING POST METHOD
+            if (numericExternalOrderId !== null && sellerPhone) {
+              try {
+                console.log(
+                  `Making POST request to seller info endpoint for order: ${numericExternalOrderId}`
+                );
+                console.log("Seller info request body:", {
+                  orderId: numericExternalOrderId,
+                  phoneNumber: sellerPhone,
+                });
+
+                const sellerResponse = await axios.post(
+                  "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
+                  {
+                    orderId: numericExternalOrderId,
+                    phoneNumber: sellerPhone,
+                  },
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    timeout: 10000,
+                  }
+                );
+                console.log(
+                  "✅ Seller info sent successfully:",
+                  sellerResponse.data
+                );
+              } catch (apiError) {
+                console.error(
+                  "❌ Failed to send seller info to API:",
+                  apiError.message || apiError
+                );
+                if (apiError.response) {
+                  console.error(
+                    "Seller API response error:",
+                    apiError.response.data
+                  );
+                }
+              }
+            } else {
+              console.warn(
+                "❌ Cannot send seller info - missing orderId or phone:",
+                {
+                  orderId: numericExternalOrderId,
+                  sellerPhone: sellerPhone,
+                }
+              );
             }
 
-            // Edit message to remove "Buyurtma Yetkazildimi?" and buttons
+            // Clear assignment
+            if (externalOrderId) {
+              clearOrderAssignment(String(externalOrderId));
+            }
+
+            // Update the message
             const allOrders = await getCourierOrdersByChatId(chatId);
-            const orderIndex = allOrders.findIndex(o => o.id === orderDbId);
-            const orderNumber = orderIndex !== -1 ? `${orderIndex + 1}. ${plainOrder.productName || "Mahsulot"} ${plainOrder.liters ? `${plainOrder.liters}L` : ""}` : "";
-            const completedOrder = { ...plainOrder, status: "completed", orderId: nextOrderId };
-            const orderText = formatCourierOrderForMessage(completedOrder, false);
-            const fullText = orderNumber ? `${orderNumber}\n\n${orderText}` : orderText;
+            const orderIndex = allOrders.findIndex((o) => o.id === orderDbId);
+            const orderNumber =
+              orderIndex !== -1
+                ? `${orderIndex + 1}. ${plainOrder.productName || "Mahsulot"} ${
+                    plainOrder.liters ? `${plainOrder.liters}L` : ""
+                  }`
+                : "";
+            const completedOrder = {
+              ...plainOrder,
+              status: "completed",
+              orderId: externalOrderId,
+            };
+            const orderText = formatCourierOrderForMessage(
+              completedOrder,
+              false
+            );
+            const fullText = orderNumber
+              ? `${orderNumber}\n\n${orderText}`
+              : orderText;
 
             await telegram.post("/editMessageText", {
               chat_id: chatId,
@@ -989,18 +1230,37 @@ async function handleUpdate(req, res) {
               text: fullText,
               parse_mode: "HTML",
               reply_markup: {
-                inline_keyboard: [[
-                  {
-                    text: "Orqaga ↩️",
-                    callback_data: `courier_orders_back:${ordersListMessageId || ''}`,
-                  },
-                ]],
+                inline_keyboard: [
+                  [
+                    {
+                      text: "Orqaga ↩️",
+                      callback_data: `courier_orders_back:${
+                        ordersListMessageId || ""
+                      }`,
+                    },
+                  ],
+                ],
               },
+            });
+
+            await telegram.post("/answerCallbackQuery", {
+              callback_query_id: cq.id,
+              text: "Buyurtma yetkazilgan deb belgilandi ✅",
             });
           }
         } catch (error) {
-          console.error("Failed to update order status:", error.message || error);
+          console.error(
+            "Failed to update order status:",
+            error.message || error
+          );
+          await telegram.post("/answerCallbackQuery", {
+            callback_query_id: cq.id,
+            text: "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+          });
         }
+
+        if (res) res.sendStatus(200);
+        return;
       } else if (data.startsWith("order_not_delivered:")) {
         // Courier reported “No” – keep status and send a reminder
         await sendMessage(
@@ -1019,7 +1279,7 @@ async function handleUpdate(req, res) {
       } else if (data.startsWith("courier_orders_back:")) {
         // Back - delete detail message only
         const detailMessageId = cq.message.message_id;
-        
+
         // Delete the detail message
         try {
           await telegram.post("/deleteMessage", {
@@ -1044,12 +1304,15 @@ async function handleUpdate(req, res) {
         // Close the orders list message and clear state
         const listMessageId = cq.message.message_id;
         try {
-          await telegram.post("/deleteMessage",  {
+          await telegram.post("/deleteMessage", {
             chat_id: chatId,
             message_id: listMessageId,
           });
         } catch (e) {
-          console.error("Failed to delete orders list message:", e.message || e);
+          console.error(
+            "Failed to delete orders list message:",
+            e.message || e
+          );
         }
         const st = userStateById.get(chatId) || {};
         if (st.ordersListMessageId) {
@@ -1079,7 +1342,11 @@ async function handleUpdate(req, res) {
       ) {
         // Clear any existing orders list message ID
         const state = userStateById.get(chatId) || {};
-        await sendCourierOrdersList(chatId, 1, state.ordersListMessageId || null);
+        await sendCourierOrdersList(
+          chatId,
+          1,
+          state.ordersListMessageId || null
+        );
         res.sendStatus(200);
         return;
       }
@@ -1169,8 +1436,6 @@ async function handleUpdate(req, res) {
 
       const state = userStateById.get(chatId) || {};
 
-      
-
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
         await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
         userStateById.delete(chatId);
@@ -1178,7 +1443,6 @@ async function handleUpdate(req, res) {
         return;
       }
 
-      
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
         const telegramId = from.id;
