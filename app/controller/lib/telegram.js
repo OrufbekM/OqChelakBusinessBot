@@ -7,7 +7,11 @@ const {
   reverseGeocodeDetailed,
   formatUzAddress,
 } = require("../../utils/geocode");
-const { createCourierOrderRecord } = require("../verification.controller");
+const {
+  createCourierOrderRecord,
+  getNextCourierForOrder,
+  clearOrderAssignment,
+} = require("../verification.controller");
 const axios = require("axios");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
@@ -25,6 +29,37 @@ const ORDER_STATUS_EMOJI = {
   completed: "✅",
   cancelled: "❌",
 };
+
+function isValidExternalOrderId(orderId) {
+  if (orderId === null || orderId === undefined) return false;
+  const str = String(orderId).trim();
+  return str.length > 0 && /^\d+$/.test(str);
+}
+
+function resolveCustomerChatId(order = {}) {
+  return (
+    order.customerChatId ||
+    order?.payload?.customer?.chatId ||
+    order?.payload?.customer?.telegramId ||
+    order?.payload?.customer?.id ||
+    null
+  );
+}
+
+function resolveExternalOrderId(order = {}) {
+  const candidates = [
+    order.orderId,
+    order?.payload?.order?.id,
+    order?.payload?.orderId,
+    order?.payload?.order?.orderId,
+  ];
+  for (const candidate of candidates) {
+    if (isValidExternalOrderId(candidate)) {
+      return String(candidate).trim();
+    }
+  }
+  return null;
+}
 
 function formatUzDate(dt) {
   try {
@@ -59,39 +94,40 @@ async function buildOrderNotificationText(
   liters,
   opts = {}
 ) {
+  let address = "—";
+  let lat;
+  let lon;
+  let mapsUrl = "";
+  const name = productName || "Milk";
+  const qty = liters ? `${liters}L` : "—";
+
   try {
     const user = await models.User.findOne({ where: { chatId: customerChatId } });
-    let address = "—";
-    let mapsUrl = "—";
-    const lat = typeof opts.latitude === "number" ? opts.latitude : user?.latitude;
-    const lon = typeof opts.longitude === "number" ? opts.longitude : user?.longitude;
+    lat = typeof opts.latitude === "number" ? opts.latitude : user?.latitude;
+    lon = typeof opts.longitude === "number" ? opts.longitude : user?.longitude;
+
     if (typeof lat === "number" && typeof lon === "number") {
       const detailed = await reverseGeocodeDetailed(lat, lon);
       const formatted = detailed?.address ? formatUzAddress(detailed.address) : null;
       address = formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
       mapsUrl = `https://maps.google.com/?q=${lat},${lon}`;
     }
-    const name = productName || "Milk";
-    const qty = liters ? `${liters}L` : "—";
-    return (
-      `📦 Mahsulot xabari\n\n` +
-      `📦 Mahsulot: ${name}\n` +
-      `📏 Miqdor: ${qty}\n` +
-      `📍 Manzili: ${address}\n` +
-      `🗺️ Lokatsiya: ${mapsUrl}\n\n` +
-      `Buyurtmani qabul qilasizmi?`
-    );
   } catch (e) {
     console.error("buildOrderNotificationText failed:", e.message || e);
-    return (
-      `📦 Mahsulot xabari\n\n` +
-      `📦 Mahsulot: ${name}\n` +
-      `📏 Miqdor: ${qty}\n` +
-      `📍 Manzili: ${address}\n` +
-      `🗺️ Lokatsiya: ${mapsUrl}\n\n` +
-      `Buyurtmani qabul qilasizmi?`
-    );
   }
+
+  locationText = `<a href="${escapeHtml(
+    mapsUrl
+  )}">Ko'rish uchun bosing</a>`;
+
+  return (
+    `📦 Mahsulot xabari\n\n` +
+    `📦 Mahsulot: ${name}\n` +
+    `📏 Miqdor: ${qty}\n` +
+    `📍 Manzili: ${address}\n` +
+    `🗺️ Lokatsiya: ${locationText}\n\n` +
+    `Buyurtmani qabul qilasizmi?`
+  );
 }
 
 // Send order request to seller with inline confirm/cancel buttons
@@ -142,6 +178,21 @@ function beautifyStatus(status) {
   const label =
     normalized.charAt(0).toUpperCase() + normalized.slice(1) || "Unknown";
   return `${emoji} ${label}`;
+}
+
+function getCourierOrderUniqueKey(order = {}) {
+  const externalId = resolveExternalOrderId(order);
+  if (externalId) {
+    const customerId = resolveCustomerChatId(order) || order.customerChatId || "";
+    return `ext:${customerId}:${externalId}`;
+  }
+  if (order.orderId) {
+    return `local:${order.orderId}`;
+  }
+  if (order.id) {
+    return `db:${order.id}`;
+  }
+  return null;
 }
 
 function formatCourierOrderForMessage(order, showQuestion = true) {
@@ -219,12 +270,25 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
       return;
     }
 
+    const seenKeys = new Set();
+    const uniqueOrders = [];
+    for (const order of allOrders) {
+      const key = getCourierOrderUniqueKey(order);
+      if (key && seenKeys.has(key)) {
+        continue;
+      }
+      if (key) {
+        seenKeys.add(key);
+      }
+      uniqueOrders.push(order);
+    }
+
     const ORDERS_PER_PAGE = 5;
-    const totalPages = Math.ceil(allOrders.length / ORDERS_PER_PAGE);
+    const totalPages = Math.ceil(uniqueOrders.length / ORDERS_PER_PAGE);
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * ORDERS_PER_PAGE;
-    const endIndex = Math.min(startIndex + ORDERS_PER_PAGE, allOrders.length);
-    const pageOrders = allOrders.slice(startIndex, endIndex);
+    const endIndex = Math.min(startIndex + ORDERS_PER_PAGE, uniqueOrders.length);
+    const pageOrders = uniqueOrders.slice(startIndex, endIndex);
 
     const orderLines = pageOrders.map((order) => {
       const name = order.productName || "Mahsulot nomi topilmadi";
@@ -343,19 +407,11 @@ async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = nu
       ]);
     }
 
-    // Back button to return to list
+    // Back button to return to list (also serves as close)
     inline_keyboard.push([
       {
         text: "Orqaga ↩️",
         callback_data: `courier_orders_back:${ordersListMessageId || ''}`,
-      },
-    ]);
-
-    // Close button to remove this detail message
-    inline_keyboard.push([
-      {
-        text: "❌",
-        callback_data: "courier_detail_close",
       },
     ]);
 
@@ -526,22 +582,8 @@ async function handleUpdate(req, res) {
       const data = cq.data;
 
       if (data === "confirm_yes") {
-        userStateById.set(chatId, { expected: "delivery_radius" });
-        await sendMessage(
-          chatId,
-          "Sut mahsulotlarini qayergacha yetkazib bera olasiz?",
-          {
-            reply_markup: {
-              keyboard: [
-                [{ text: "2 km" }, { text: "4 km" }],
-                [{ text: "6 km" }, { text: "8 km" }],
-                [{ text: "Boshqa" }, { text: "Hamma joyga" }],
-              ],
-              resize_keyboard: true,
-              one_time_keyboard: false,
-            },
-          }
-        );
+        userStateById.set(chatId, {});
+        await sendHomeMenuWithMessage(chatId, "Ma'lumotlar tasdiqlandi ✅");
       } else if (data === "order_confirm_yes") {
         // legacy no-op: ignore bare confirm without identifiers
         // Backward compatibility: previous format didn't include customer chat id.
@@ -549,7 +591,8 @@ async function handleUpdate(req, res) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
         const rawOrderId = parts[2] || null;
-        let orderId = rawOrderId ? parseInt(rawOrderId, 10) : null;
+        let resolvedOrderNumber =
+          rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
         const confirmationMessageId = cq.message.message_id;
         
         // Edit seller's inline message
@@ -580,7 +623,7 @@ async function handleUpdate(req, res) {
         
         // Fallback: if orderId is missing/invalid, pick the most recent pending order
         let orderDetails = null;
-        if (customerChatId && (!orderId || Number.isNaN(orderId))) {
+        if (customerChatId && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
           const ordersResp = await getUserOrders(customerChatId);
           const list = Array.isArray(ordersResp)
             ? ordersResp
@@ -590,7 +633,7 @@ async function handleUpdate(req, res) {
               .filter((o) => (o.status || "").toLowerCase() === "pending")
               .sort((a, b) => (b.id || 0) - (a.id || 0));
             if (pendingSortedDesc.length > 0) {
-              orderId = pendingSortedDesc[0].id;
+              resolvedOrderNumber = pendingSortedDesc[0].id;
               orderDetails = pendingSortedDesc[0];
             }
           }
@@ -635,7 +678,9 @@ async function handleUpdate(req, res) {
         
         const normalizedOrderId =
           rawOrderId ||
-          (orderId !== null && !Number.isNaN(orderId) ? String(orderId) : null);
+          (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
+            ? String(resolvedOrderNumber)
+            : null);
         
         // Check if order already exists in CourierOrder
         const existingOrder = normalizedOrderId && customerChatId
@@ -673,10 +718,14 @@ async function handleUpdate(req, res) {
         }
         
         // Accept -> set processing in external API
-        if (customerChatId && orderId && !Number.isNaN(orderId)) {
+        if (customerChatId && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
           try {
-            await updateOrderStatus(customerChatId, orderId, "processing");
+            await updateOrderStatus(customerChatId, resolvedOrderNumber, "processing");
           } catch (_) {}
+        }
+
+        if (normalizedOrderId) {
+          clearOrderAssignment(normalizedOrderId);
         }
       } else if (data === "order_confirm_no") {
         // legacy no-op: ignore bare cancel without identifiers
@@ -684,7 +733,8 @@ async function handleUpdate(req, res) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
         const rawOrderId = parts[2] || null;
-        let orderId = rawOrderId ? parseInt(rawOrderId, 10) : null;
+        let resolvedOrderNumber =
+          rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
         const confirmationMessageId = cq.message.message_id;
         await telegram.post("/editMessageText", {
           chat_id: chatId,
@@ -693,8 +743,7 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         });
-        // Fallback: if orderId is missing/invalid, pick the most recent pending order
-        if (customerChatId && (!orderId || Number.isNaN(orderId))) {
+        if (customerChatId && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
           const ordersResp = await getUserOrders(customerChatId);
           const list = Array.isArray(ordersResp)
             ? ordersResp
@@ -704,34 +753,83 @@ async function handleUpdate(req, res) {
               .filter((o) => (o.status || "").toLowerCase() === "pending")
               .sort((a, b) => (b.id || 0) - (a.id || 0));
             if (pendingSortedDesc.length > 0) {
-              orderId = pendingSortedDesc[0].id;
+              resolvedOrderNumber = pendingSortedDesc[0].id;
             }
           }
         }
         const normalizedOrderId =
           rawOrderId ||
-          (orderId !== null && !Number.isNaN(orderId) ? String(orderId) : null);
-        // Cancel -> set cancelled and notify customer
-        if (customerChatId && orderId && !Number.isNaN(orderId)) {
-          try {
-            await updateOrderStatus(customerChatId, orderId, "cancelled");
-          } catch (e) {
-            await sendMessage(
-              chatId,
-              `Status yangilashda xatolik ❌ (userId=${customerChatId}, orderId=${orderId}): cancelled`
-            );
-          }
-        } else {
-          await sendMessage(chatId, "Status yangilab bo'lmadi: noto'g'ri identifikatorlar.");
-        }
+          (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
+            ? String(resolvedOrderNumber)
+            : null);
+
         await updateCourierOrderStatusLocal({
           courierChatId: chatId,
           customerChatId,
           orderId: normalizedOrderId,
           status: "cancelled",
         });
-        if (customerChatId && !Number.isNaN(customerChatId)) {
-          //a
+
+        let reassigned = false;
+        if (normalizedOrderId) {
+          const nextCourier = getNextCourierForOrder(normalizedOrderId, chatId);
+          const nextCourierChatId = nextCourier?.candidate?.courier?.chatId;
+          if (nextCourier && nextCourierChatId) {
+            try {
+              const nextContext = nextCourier.context || {};
+              const targetCustomer = nextContext.customer || {};
+              const nextCustomerChatId =
+                targetCustomer.chatId ||
+                targetCustomer.telegramId ||
+                targetCustomer.id ||
+                customerChatId;
+              await notifySellerAboutOrder({
+                sellerChatId: nextCourierChatId,
+                customerChatId: nextCustomerChatId,
+                orderId: normalizedOrderId,
+                productName: nextContext.productName || "Sut",
+                liters: nextContext.liters,
+                latitude: targetCustomer.latitude,
+                longitude: targetCustomer.longitude,
+              });
+
+              await createCourierOrderRecord({
+                courierChatId: nextCourierChatId,
+                customer: targetCustomer,
+                order: nextContext.order,
+                productName: nextContext.productName,
+                liters: nextContext.liters,
+                address: nextContext.customerAddress,
+              });
+
+              await sendMessage(
+                chatId,
+                "Rahmat! Buyurtma boshqa kuryerga yuborildi 🚚"
+              );
+              reassigned = true;
+            } catch (err) {
+              console.error("Failed to forward order to next courier:", err.message || err);
+            }
+          }
+        }
+
+        if (!reassigned) {
+          if (customerChatId && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
+            try {
+              await updateOrderStatus(customerChatId, resolvedOrderNumber, "cancelled");
+            } catch (e) {
+              await sendMessage(
+                chatId,
+                `Status yangilashda xatolik ❌ (userId=${customerChatId}, orderId=${resolvedOrderNumber}): cancelled`
+              );
+            }
+          } else {
+            await sendMessage(chatId, "Status yangilab bo'lmadi: noto'g'ri identifikatorlar.");
+          }
+
+          if (normalizedOrderId) {
+            clearOrderAssignment(normalizedOrderId);
+          }
         }
       } else if (data === "confirm_no") {
         await sendMessage(
@@ -763,15 +861,26 @@ async function handleUpdate(req, res) {
         try {
           const order = await models.CourierOrder.findByPk(orderDbId);
           if (order) {
+            const plainOrder =
+              typeof order.get === "function" ? order.get({ plain: true }) : order;
+            const externalUserId = resolveCustomerChatId(plainOrder);
+            const externalOrderId =
+              resolveExternalOrderId(plainOrder) || plainOrder.orderId || null;
+
+            const nextOrderId = externalOrderId || plainOrder.orderId || null;
+
             await models.CourierOrder.update(
-              { status: "completed" },
+              {
+                status: "completed",
+                orderId: nextOrderId,
+              },
               { where: { id: orderDbId } }
             );
             
-            // Update external API if orderId and customerChatId exist
-            if (order.orderId && order.customerChatId) {
+            // Update external API using the best identifiers we have
+            if (externalUserId && externalOrderId) {
               try {
-                await updateOrderStatus(order.customerChatId, order.orderId, "completed");
+                await updateOrderStatus(externalUserId, externalOrderId, "completed");
               } catch (e) {
                 console.error("Failed to update order status in external API:", e.message || e);
               }
@@ -780,8 +889,9 @@ async function handleUpdate(req, res) {
             // Edit message to remove "Buyurtma Yetkazildimi?" and buttons
             const allOrders = await getCourierOrdersByChatId(chatId);
             const orderIndex = allOrders.findIndex(o => o.id === orderDbId);
-            const orderNumber = orderIndex !== -1 ? `${orderIndex + 1}. ${order.productName || "Mahsulot"} ${order.liters ? `${order.liters}L` : ""}` : "";
-            const orderText = formatCourierOrderForMessage(order, false);
+            const orderNumber = orderIndex !== -1 ? `${orderIndex + 1}. ${plainOrder.productName || "Mahsulot"} ${plainOrder.liters ? `${plainOrder.liters}L` : ""}` : "";
+            const completedOrder = { ...plainOrder, status: "completed", orderId: nextOrderId };
+            const orderText = formatCourierOrderForMessage(completedOrder, false);
             const fullText = orderNumber ? `${orderNumber}\n\n${orderText}` : orderText;
 
             await telegram.post("/editMessageText", {
@@ -803,11 +913,7 @@ async function handleUpdate(req, res) {
           console.error("Failed to update order status:", error.message || error);
         }
       } else if (data.startsWith("order_not_delivered:")) {
-        // Order not delivered - keep status pending and show message
-        const parts = data.split(":");
-        const orderDbId = parseInt(parts[1], 10);
-        
-        // Show reminder message
+        // Courier reported “No” – keep status and send a reminder
         await sendMessage(
           chatId,
           "Iltimos, buyurtmani tezroq yetkazib bering 📦"
@@ -974,86 +1080,7 @@ async function handleUpdate(req, res) {
 
       const state = userStateById.get(chatId) || {};
 
-      if (state.expected === "delivery_radius") {
-        // Parse choices like "2 km", "4 km", "6 km", "8 km", "Boshqa", "Hamma joyga"
-        const lower = (text || "").toLowerCase();
-        if (/(^|\s)hamma\s+joyga($|\s)/i.test(text)) {
-          // Unlimited radius → store as NULL (treated as Infinity in matching)
-          try {
-            await models.User.update(
-              { deliveryRadius: null, allowedLocations: ["all"] },
-              { where: { chatId } }
-            );
-          } catch (e) {
-            console.error("Sequelize update (deliveryRadius=null) failed:", e.message || e);
-          }
-          userStateById.set(chatId, {});
-          await sendHomeMenuWithMessage(chatId, "Yetkazib berish radiusi: Hamma joyga ✅");
-          res.sendStatus(200);
-          return;
-        }
-        if (/^boshqa$/i.test(text)) {
-          userStateById.set(chatId, { expected: "delivery_radius_custom" });
-          await sendMessage(chatId, "Necha km radius? (masalan: 3)", {
-            reply_markup: { remove_keyboard: true },
-          });
-          res.sendStatus(200);
-          return;
-        }
-        const m = text.match(/^(\d+)\s*km$/i) || text.match(/^(\d+)$/);
-        if (m) {
-          const km = parseInt(m[1], 10);
-          if (km > 0) {
-            const meters = km * 1000;
-            try {
-              await models.User.update(
-                { deliveryRadius: meters, allowedLocations: [`${km}km`] },
-                { where: { chatId } }
-              );
-            } catch (e) {
-              console.error("Sequelize update (deliveryRadius) failed:", e.message || e);
-            }
-            userStateById.set(chatId, {});
-            await sendHomeMenuWithMessage(
-              chatId,
-              `Yetkazib berish radiusi o'rnatildi: ${km} km ✅`
-            );
-            res.sendStatus(200);
-            return;
-          }
-        }
-        await sendMessage(chatId, "Iltimos, quyidagilardan birini tanlang: 2 km, 4 km, 6 km, 8 km, Boshqa, Hamma joyga");
-        res.sendStatus(200);
-        return;
-      }
-
-      if (state.expected === "delivery_radius_custom") {
-        const m = text.match(/^(\d+)\s*(?:km)?$/i);
-        if (m) {
-          const km = parseInt(m[1], 10);
-          if (km > 0) {
-            const meters = km * 1000;
-            try {
-              await models.User.update(
-                { deliveryRadius: meters, allowedLocations: [`${km}km`] },
-                { where: { chatId } }
-              );
-            } catch (e) {
-              console.error("Sequelize update (deliveryRadius custom) failed:", e.message || e);
-            }
-            userStateById.set(chatId, {});
-            await sendHomeMenuWithMessage(
-              chatId,
-              `Yetkazib berish radiusi o'rnatildi: ${km} km ✅`
-            );
-            res.sendStatus(200);
-            return;
-          }
-        }
-        await sendMessage(chatId, "Iltimos, to'g'ri km kiriting (masalan: 3)");
-        res.sendStatus(200);
-        return;
-      }
+      
 
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
         await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
@@ -1062,94 +1089,7 @@ async function handleUpdate(req, res) {
         return;
       }
 
-      if (state.expected === "delivery_radius") {
-        if (text === "Hamma joyga") {
-          try {
-            await models.User.update(
-              { deliveryRadius: null },
-              { where: { chatId } }
-            );
-          } catch (e) {
-            console.error(
-              "Sequelize update (deliveryRadius unlimited) failed:",
-              e.message || e
-            );
-          }
-          await sendHomeMenuWithMessage(
-            chatId,
-            "Yetkazib berish radiusi o'zgartirildi ✅\n\nHamma joyga yetkazib beriladi"
-          );
-          userStateById.delete(chatId);
-          res.sendStatus(200);
-          return;
-        } else if (text === "Boshqa") {
-          userStateById.set(chatId, { expected: "delivery_radius_custom" });
-          await sendMessage(
-            chatId,
-            "Necha km yetkazib bera olasiz? (Raqam kiriting, masalan: 10)",
-            {
-              reply_markup: { remove_keyboard: true },
-            }
-          );
-          res.sendStatus(200);
-          return;
-        } else {
-          const match = text.match(/^(\d+(?:\.\d+)?)\s*km?$/i);
-          if (match) {
-            const radius = parseFloat(match[1]);
-            try {
-              await models.User.update(
-                { deliveryRadius: radius },
-                { where: { chatId } }
-              );
-            } catch (e) {
-              console.error(
-                "Sequelize update (deliveryRadius) failed:",
-                e.message || e
-              );
-            }
-            await sendHomeMenuWithMessage(
-              chatId,
-              `Yetkazib berish radiusi o'zgartirildi ✅\n\n${radius} km masofaga yetkazib beriladi`
-            );
-            userStateById.delete(chatId);
-            res.sendStatus(200);
-            return;
-          }
-        }
-      }
-
-      if (state.expected === "delivery_radius_custom") {
-        const radius = parseFloat(text);
-        if (!isNaN(radius) && radius > 0) {
-          try {
-            await models.User.update(
-              { deliveryRadius: radius },
-              { where: { chatId } }
-            );
-          } catch (e) {
-            console.error(
-              "Sequelize update (deliveryRadius custom) failed:",
-              e.message || e
-            );
-          }
-          await sendHomeMenuWithMessage(
-            chatId,
-            `Yetkazib berish radiusi o'zgartirildi ✅\n\n${radius} km masofaga yetkazib beriladi`
-          );
-          userStateById.delete(chatId);
-          res.sendStatus(200);
-          return;
-        } else {
-          await sendMessage(
-            chatId,
-            "Iltimos, to'g'ri raqam kiriting (masalan: 10)"
-          );
-          res.sendStatus(200);
-          return;
-        }
-      }
-
+      
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
         const telegramId = from.id;

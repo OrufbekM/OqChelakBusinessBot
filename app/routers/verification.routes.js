@@ -4,6 +4,8 @@ const db = require("../models");
 const {
   findFirstCourierWithinRadius,
   createCourierOrderRecord,
+  rememberOrderAssignment,
+  getOrderIdentifier,
 } = require("../controller/verification.controller");
 const { notifySellerAboutOrder } = require("../controller/lib/telegram");
 
@@ -25,38 +27,62 @@ router.post("/new-order", async (req, res) => {
 
     const result = await findFirstCourierWithinRadius(db.User, customer, order);
 
-    if (!result) {
+    if (!result || !result?.candidates?.length) {
       return res.status(404).json({ ok: false, error: "No courier found within radius" });
     }
 
-    if (result?.courier?.chatId) {
-      const prItem = order?.product?.items?.[0] || {};
-      const productName = prItem.name || "Sut";
-      const liters = prItem.quantity != null ? Number(prItem.quantity) : undefined;
+    const prItem = order?.product?.items?.[0] || {};
+    const productName = prItem.name || order?.product?.name || "Sut";
+    const liters = prItem.quantity != null ? Number(prItem.quantity) : undefined;
 
-      const customerChatId = customer.chatId || customer.telegramId || customer.id;
-      const orderId = order.id != null ? String(order.id) : "";
-      await notifySellerAboutOrder({
-        sellerChatId: result.courier.chatId,
-        customerChatId,
-        orderId,
-        productName,
-        liters,
-        latitude: customer.latitude,
-        longitude: customer.longitude,
-      });
-
-      await createCourierOrderRecord({
-        courierChatId: result.courier.chatId,
-        customer,
-        order,
-        productName,
-        liters,
-        address: result.customerAddress,
-      });
+    const customerChatId =
+      customer.chatId || customer.telegramId || customer.id || customer.userId;
+    const normalizedOrderId = getOrderIdentifier(order, customer);
+    const normalizedOrder = { ...order };
+    if (normalizedOrder.id === undefined || normalizedOrder.id === null) {
+      normalizedOrder.id = normalizedOrderId;
     }
 
-    res.json({ ok: true, ...result });
+    const activeCourier = result.courier;
+    if (!activeCourier?.chatId) {
+      return res.status(404).json({ ok: false, error: "No courier chatId found" });
+    }
+
+    const initialIndex = result.candidates.findIndex(
+      (candidate) => candidate?.courier?.chatId === activeCourier.chatId
+    );
+
+    rememberOrderAssignment(normalizedOrderId, {
+      customer,
+      order: normalizedOrder,
+      productName,
+      liters,
+      customerAddress: result.customerAddress,
+      candidates: result.candidates,
+      assignedIndex: initialIndex >= 0 ? initialIndex : 0,
+      activeCourierChatId: activeCourier.chatId,
+    });
+
+    await notifySellerAboutOrder({
+      sellerChatId: activeCourier.chatId,
+      customerChatId,
+      orderId: normalizedOrderId,
+      productName,
+      liters,
+      latitude: customer.latitude,
+      longitude: customer.longitude,
+    });
+
+    await createCourierOrderRecord({
+      courierChatId: activeCourier.chatId,
+      customer,
+      order: normalizedOrder,
+      productName,
+      liters,
+      address: result.customerAddress,
+    });
+
+    res.json({ ok: true, orderId: normalizedOrderId, courier: activeCourier });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }

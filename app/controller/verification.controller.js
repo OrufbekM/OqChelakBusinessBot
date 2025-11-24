@@ -6,6 +6,95 @@ const {
 } = require("../utils/geocode");
 const db = require("../models");
 
+const orderAssignments = new Map();
+
+function getOrderIdentifier(order = {}, customer = {}) {
+  const directCandidates = [
+    order?.id,
+    order?.orderId,
+    order?.externalId,
+    order?.payload?.order?.id,
+    order?.payload?.orderId,
+  ];
+  for (const candidate of directCandidates) {
+    if (candidate !== undefined && candidate !== null && candidate !== "") {
+      return String(candidate);
+    }
+  }
+  const customerKey =
+    customer?.chatId || customer?.telegramId || customer?.id || "anon";
+  return `tmp-${customerKey}-${Date.now()}`;
+}
+
+function normalizeCandidateList(candidates = []) {
+  return candidates
+    .filter(Boolean)
+    .map((candidate) => ({
+      courier: candidate.courier,
+      distanceMeters: candidate.distanceMeters,
+      distanceKm: candidate.distanceKm,
+      withinRadius: Boolean(candidate.withinRadius),
+    }));
+}
+
+function rememberOrderAssignment(orderId, payload = {}) {
+  if (!orderId) return;
+  const snapshot = {
+    ...payload,
+    candidates: normalizeCandidateList(payload.candidates),
+    assignedIndex:
+      typeof payload.assignedIndex === "number" ? payload.assignedIndex : 0,
+    activeCourierChatId:
+      payload.activeCourierChatId ||
+      payload.candidates?.[payload.assignedIndex || 0]?.courier?.chatId ||
+      null,
+    declinedChatIds:
+      payload.declinedChatIds instanceof Set
+        ? payload.declinedChatIds
+        : new Set(payload.declinedChatIds || []),
+  };
+  orderAssignments.set(orderId, snapshot);
+}
+
+function getNextCourierForOrder(orderId, declinedChatId = null) {
+  const state = orderAssignments.get(orderId);
+  if (!state) {
+    return null;
+  }
+
+  if (declinedChatId) {
+    state.declinedChatIds.add(declinedChatId);
+    if (state.activeCourierChatId === declinedChatId) {
+      state.activeCourierChatId = null;
+    }
+  }
+
+  let nextIndex = (state.assignedIndex ?? -1) + 1;
+  while (nextIndex < state.candidates.length) {
+    const candidate = state.candidates[nextIndex];
+    const candidateChatId = candidate?.courier?.chatId;
+    if (!candidateChatId || state.declinedChatIds.has(candidateChatId)) {
+      nextIndex += 1;
+      continue;
+    }
+    state.assignedIndex = nextIndex;
+    state.activeCourierChatId = candidateChatId;
+    return {
+      candidate,
+      context: state,
+    };
+  }
+
+  orderAssignments.delete(orderId);
+  return null;
+}
+
+function clearOrderAssignment(orderId) {
+  if (orderId) {
+    orderAssignments.delete(orderId);
+  }
+}
+
 function toNumber(value) {
   if (value === null || value === undefined) return null;
   const num = Number(value);
@@ -60,6 +149,8 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
   const customerCoords = buildCoordinate(customer);
   if (!customerCoords) return null;
 
+  const candidates = [];
+
   for (const courierRecord of couriers) {
     const courier =
       typeof courierRecord?.get === "function"
@@ -75,26 +166,9 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
     if (courierRadius === null) continue;
 
     const distance = haversine(courierCoords, customerCoords);
-    if (distance > courierRadius) continue;
+    const withinRadius = distance <= courierRadius;
 
-    const customerAddress =
-      (await resolveAddress(customerCoords[0], customerCoords[1])) ||
-      formatCoordinates(customerCoords);
-
-    const distanceKm = Number((distance / 1000).toFixed(2));
-
-    console.log(
-      [
-        "Zakaz keldi! 🛒",
-        `Buyurtma bergan: ${customer.fullName || customer.username}`,
-        `Manzil: ${customerAddress}`,
-        `Masofa: ${distanceKm} km`,
-      ].join("\n")
-    );
-
-    return {
-      order,
-      customer,
+    candidates.push({
       courier: {
         id: courier?.id,
         chatId: courier?.chatId,
@@ -102,12 +176,46 @@ async function findFirstCourierWithinRadius(User, customer, order = {}) {
         longitude: courierCoords[1],
         deliveryRadius: courierRadius,
       },
-      distanceKm,
-      customerAddress,
-    };
+      distanceMeters: distance,
+      distanceKm: Number((distance / 1000).toFixed(2)),
+      withinRadius,
+    });
   }
 
-  return null;
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    if (a.withinRadius !== b.withinRadius) {
+      return a.withinRadius ? -1 : 1;
+    }
+    return a.distanceMeters - b.distanceMeters;
+  });
+
+  const topCandidate = candidates[0];
+
+  const customerAddress =
+    (await resolveAddress(customerCoords[0], customerCoords[1])) ||
+    formatCoordinates(customerCoords);
+
+  console.log(
+    [
+      "Zakaz keldi! 🛒",
+      `Buyurtma bergan: ${customer.fullName || customer.username || "Nomalum"}`,
+      `Manzil: ${customerAddress}`,
+      `Masofa: ${topCandidate.distanceKm} km`,
+    ].join("\n")
+  );
+
+  return {
+    order,
+    customer,
+    courier: topCandidate.courier,
+    distanceKm: topCandidate.distanceKm,
+    customerAddress,
+    candidates,
+  };
 }
 
 async function createCourierOrderRecord({
@@ -194,4 +302,8 @@ async function createCourierOrderRecord({
 module.exports = {
   findFirstCourierWithinRadius,
   createCourierOrderRecord,
+  rememberOrderAssignment,
+  getNextCourierForOrder,
+  clearOrderAssignment,
+  getOrderIdentifier,
 };
