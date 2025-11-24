@@ -486,14 +486,37 @@ async function getUserOrders(userId) {
   }
 }
 
-async function updateOrderStatus(userId, orderId, status) {
+async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
   try {
     const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(
       userId
     )}/order/${encodeURIComponent(orderId)}`;
+    
+    // Prepare the update data
+    const updateData = { status };
+    
+    // If status is completed and we have a courier phone number, include it in the update
+    if (status === 'completed' && courierPhone) {
+      updateData.phoneNumber = courierPhone;
+      
+      // Also send to the specified webhook URL
+      try {
+        await axios.post('https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/', {
+          orderId,
+          phoneNumber: courierPhone
+        }, { 
+          timeout: 10000,
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (webhookError) {
+        console.error('Failed to send courier phone to webhook:', webhookError.message || webhookError);
+        // Don't fail the whole operation if webhook fails
+      }
+    }
+    
     const { data } = await axios.put(
       url,
-      { status },
+      updateData,
       { timeout: 15000, headers: { "Content-Type": "application/json" } }
     );
     return data;
@@ -924,10 +947,23 @@ async function handleUpdate(req, res) {
               { where: { id: orderDbId } }
             );
             
+            // Get courier's phone number
+            let courierPhone = null;
+            try {
+              const courier = await models.User.findOne({
+                where: { chatId: chatId },
+                attributes: ['phone'],
+                raw: true
+              });
+              courierPhone = courier?.phone;
+            } catch (e) {
+              console.error("Failed to fetch courier's phone:", e.message || e);
+            }
+            
             // Update external API using the best identifiers we have
             if (externalUserId && numericExternalOrderId !== null) {
               try {
-                await updateOrderStatus(externalUserId, numericExternalOrderId, "completed");
+                await updateOrderStatus(externalUserId, numericExternalOrderId, "completed", courierPhone);
               } catch (e) {
                 console.error("Failed to update order status in external API:", e.message || e);
               }
