@@ -25,7 +25,21 @@ router.post("/new-order", async (req, res) => {
         .json({ ok: false, error: "Customer latitude and longitude are required" });
     }
 
-    const result = await findFirstCourierWithinRadius(db.User, customer, order);
+    const enrichedCustomer = {
+      ...customer,
+      userId:
+        customer?.userId ??
+        order?.userId ??
+        order?.customerId ??
+        customer?.id ??
+        null,
+    };
+
+    const result = await findFirstCourierWithinRadius(
+      db.User,
+      enrichedCustomer,
+      order
+    );
 
     if (!result || !result?.candidates?.length) {
       return res.status(404).json({ ok: false, error: "No courier found within radius" });
@@ -36,8 +50,11 @@ router.post("/new-order", async (req, res) => {
     const liters = prItem.quantity != null ? Number(prItem.quantity) : undefined;
 
     const customerChatId =
-      customer.chatId || customer.telegramId || customer.id || customer.userId;
-    const normalizedOrderId = getOrderIdentifier(order, customer);
+      enrichedCustomer.chatId ||
+      enrichedCustomer.telegramId ||
+      enrichedCustomer.id ||
+      enrichedCustomer.userId;
+    const normalizedOrderId = getOrderIdentifier(order, enrichedCustomer);
     const normalizedOrder = { ...order };
     if (normalizedOrder.id === undefined || normalizedOrder.id === null) {
       normalizedOrder.id = normalizedOrderId;
@@ -53,7 +70,7 @@ router.post("/new-order", async (req, res) => {
     );
 
     rememberOrderAssignment(normalizedOrderId, {
-      customer,
+      customer: enrichedCustomer,
       order: normalizedOrder,
       productName,
       liters,
@@ -75,7 +92,7 @@ router.post("/new-order", async (req, res) => {
 
     await createCourierOrderRecord({
       courierChatId: activeCourier.chatId,
-      customer,
+      customer: enrichedCustomer,
       order: normalizedOrder,
       productName,
       liters,

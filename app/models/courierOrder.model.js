@@ -15,6 +15,10 @@ module.exports = (sequelize, Sequelize) => {
         type: Sequelize.BIGINT,
         allowNull: true,
       },
+      customerUserId: {
+        type: Sequelize.BIGINT,
+        allowNull: true,
+      },
       orderId: {
         type: Sequelize.STRING,
         allowNull: true,
@@ -54,6 +58,11 @@ module.exports = (sequelize, Sequelize) => {
       payload: {
         type: Sequelize.JSON,
         allowNull: true,
+      },
+      status: {
+        type: Sequelize.STRING,
+        allowNull: false,
+        defaultValue: "pending",
       },
     },
     {

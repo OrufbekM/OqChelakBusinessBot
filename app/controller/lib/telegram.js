@@ -11,6 +11,8 @@ const {
   createCourierOrderRecord,
   getNextCourierForOrder,
   clearOrderAssignment,
+  getOrderAssignment,
+  markOrderAccepted,
 } = require("../verification.controller");
 const axios = require("axios");
 
@@ -39,8 +41,13 @@ function isValidExternalOrderId(orderId) {
 function resolveCustomerChatId(order = {}) {
   return (
     order.customerChatId ||
+    order.customerUserId ||
+    order.customerId ||
+    order?.payload?.customer?.userId ||
     order?.payload?.customer?.chatId ||
     order?.payload?.customer?.telegramId ||
+    order?.payload?.order?.userId ||
+    order?.payload?.order?.customerId ||
     order?.payload?.customer?.id ||
     null
   );
@@ -59,6 +66,21 @@ function resolveExternalOrderId(order = {}) {
     }
   }
   return null;
+}
+
+function toNumericId(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const num = Number(trimmed);
+  return Number.isFinite(num) ? num : null;
 }
 
 function formatUzDate(dt) {
@@ -717,15 +739,17 @@ async function handleUpdate(req, res) {
           });
         }
         
-        // Accept -> set processing in external API
-        if (customerChatId && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
+        // Accept -> set processing in external API (only if numeric order id available)
+        const numericResolvedOrderId =
+          toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
+        if (customerChatId && numericResolvedOrderId !== null) {
           try {
-            await updateOrderStatus(customerChatId, resolvedOrderNumber, "processing");
+            await updateOrderStatus(customerChatId, numericResolvedOrderId, "processing");
           } catch (_) {}
         }
 
         if (normalizedOrderId) {
-          clearOrderAssignment(normalizedOrderId);
+          markOrderAccepted(normalizedOrderId, chatId);
         }
       } else if (data === "order_confirm_no") {
         // legacy no-op: ignore bare cancel without identifiers
@@ -863,11 +887,34 @@ async function handleUpdate(req, res) {
           if (order) {
             const plainOrder =
               typeof order.get === "function" ? order.get({ plain: true }) : order;
-            const externalUserId = resolveCustomerChatId(plainOrder);
-            const externalOrderId =
+            let externalUserId = resolveCustomerChatId(plainOrder);
+            let externalOrderId =
               resolveExternalOrderId(plainOrder) || plainOrder.orderId || null;
 
+            const assignmentSnapshot =
+              plainOrder.orderId ? getOrderAssignment(plainOrder.orderId) : null;
+            if (assignmentSnapshot) {
+              const snapshotCustomer = assignmentSnapshot.customer || {};
+              if (!externalUserId) {
+                externalUserId =
+                  snapshotCustomer.chatId ||
+                  snapshotCustomer.telegramId ||
+                  snapshotCustomer.id ||
+                  null;
+              }
+              if (!externalOrderId) {
+                const snapshotOrder = assignmentSnapshot.order || {};
+                externalOrderId =
+                  snapshotOrder.id != null
+                    ? snapshotOrder.id
+                    : snapshotOrder.orderId != null
+                    ? snapshotOrder.orderId
+                    : externalOrderId;
+              }
+            }
+
             const nextOrderId = externalOrderId || plainOrder.orderId || null;
+            const numericExternalOrderId = toNumericId(externalOrderId);
 
             await models.CourierOrder.update(
               {
@@ -878,12 +925,18 @@ async function handleUpdate(req, res) {
             );
             
             // Update external API using the best identifiers we have
-            if (externalUserId && externalOrderId) {
+            if (externalUserId && numericExternalOrderId !== null) {
               try {
-                await updateOrderStatus(externalUserId, externalOrderId, "completed");
+                await updateOrderStatus(externalUserId, numericExternalOrderId, "completed");
               } catch (e) {
                 console.error("Failed to update order status in external API:", e.message || e);
               }
+            }
+
+            const assignmentKey =
+              plainOrder.orderId || externalOrderId || nextOrderId || null;
+            if (assignmentKey) {
+              clearOrderAssignment(String(assignmentKey));
             }
 
             // Edit message to remove "Buyurtma Yetkazildimi?" and buttons

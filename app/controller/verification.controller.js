@@ -95,6 +95,20 @@ function clearOrderAssignment(orderId) {
   }
 }
 
+function getOrderAssignment(orderId) {
+  if (!orderId) return null;
+  return orderAssignments.get(orderId) || null;
+}
+
+function markOrderAccepted(orderId, courierChatId) {
+  if (!orderId) return;
+  const state = orderAssignments.get(orderId);
+  if (!state) return;
+  state.acceptedBy = courierChatId || state.acceptedBy || null;
+  state.activeCourierChatId = courierChatId || state.activeCourierChatId || null;
+  orderAssignments.set(orderId, state);
+}
+
 function toNumber(value) {
   if (value === null || value === undefined) return null;
   const num = Number(value);
@@ -254,6 +268,12 @@ async function createCourierOrderRecord({
       courierChatId,
       customerChatId:
         customer?.chatId || customer?.telegramId || customer?.id || null,
+      customerUserId:
+        customer?.userId ||
+        customer?.id ||
+        customer?.chatId ||
+        customer?.telegramId ||
+        null,
       orderId:
         order?.id != null
           ? String(order.id)
@@ -306,4 +326,6 @@ module.exports = {
   getNextCourierForOrder,
   clearOrderAssignment,
   getOrderIdentifier,
+  getOrderAssignment,
+  markOrderAccepted,
 };
