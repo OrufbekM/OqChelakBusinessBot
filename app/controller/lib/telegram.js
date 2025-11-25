@@ -634,7 +634,9 @@ async function askLocation(chatId) {
 async function homeMenu(chatId) {
   await sendMessage(chatId, "Bosh sahifa:", {
     reply_markup: {
-      keyboard: [[{ text: "Buyurtmalarim 📑" }]],
+      keyboard: [[{ text: "Buyurtmalarim 📑" }],
+      [{ text: "Tilni o'zgartirish 🌐" }]
+    ],
       resize_keyboard: true,
       one_time_keyboard: false,
     },
@@ -643,7 +645,8 @@ async function homeMenu(chatId) {
 
 async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   const reply_markup = {
-    keyboard: [[{ text: "Buyurtmalarim 📑" }]],
+    keyboard: [[{ text: "Buyurtmalarim 📑" }],
+    [{ text: "Tilni o'zgartirish 🌐" }]],
     resize_keyboard: true,
     one_time_keyboard: false,
   };
@@ -1340,7 +1343,6 @@ async function handleUpdate(req, res) {
         text === "Buyurtmalarim" ||
         text === "Buyurtmalarim🗒️"
       ) {
-        // Clear any existing orders list message ID
         const state = userStateById.get(chatId) || {};
         await sendCourierOrdersList(
           chatId,
@@ -1350,6 +1352,48 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
       }
+      if (
+        text === "/language" ||
+        text === "Tilni o'zgartirish 🌐" ||
+        text === "Tilni o'zgartirish" ||
+        text === "🌐 Tilni o'zgartirish"
+      ) {
+        await sendMessage(chatId, "🌐 Tilni tanlang:", {
+          reply_markup: {
+            keyboard: [
+              [{ text: "🇺🇿 O'zbek (Lotin)" }],
+              [{ text: "🇺🇿 Ўзбек (Кирилл)" }]
+            ],
+            resize_keyboard: true
+          }
+        });
+      
+        res.sendStatus(200);
+        return;
+      } 
+
+      let responseJson = null
+
+      if (text === "🇺🇿 O'zbek (Lotin)") {
+        responseJson = {
+        chatId,
+        language: "uz_lat",
+        message: "Til muvaffaqiyatli o'zgartirildi!"
+        };
+        } else if (text === "🇺🇿 Ўзбек (Кирилл)") {
+        responseJson = {
+        chatId,
+        language: "uz_cyr",
+        message: "Тил муваффақиятли ўзгартирилди!"
+        };
+        }
+        
+        if (responseJson) {
+        console.log(responseJson); 
+        await sendMessage(chatId, responseJson.message, { sendHomeMenuWithMessage });
+        res.sendStatus(200);
+        return;
+        }
 
       if (message.location && typeof message.location.latitude === "number") {
         const st = userStateById.get(chatId) || {};
@@ -1466,7 +1510,8 @@ async function handleUpdate(req, res) {
                 `👤Ismingiz: ${existingUser.fullName || "—"}`,
               {
                 reply_markup: {
-                  keyboard: [[{ text: "Buyurtmalarim 📑" }]],
+                  keyboard: [[{ text: "Buyurtmalarim 📑" }],
+                  [{ text: "Tilni o'zgartirish 🌐" }]],
                   resize_keyboard: true,
                 },
               }
