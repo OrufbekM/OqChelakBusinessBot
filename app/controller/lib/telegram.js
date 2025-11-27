@@ -8,7 +8,7 @@ const {
   formatUzAddress,
 } = require("../../utils/geocode");
 const {
-  createCourierOrderRecord,
+  createCourierOrderRecord, 
   getNextCourierForOrder,
   clearOrderAssignment,
   getOrderAssignment,
@@ -1403,7 +1403,7 @@ async function handleUpdate(req, res) {
         };
         st.expected = null;
         userStateById.set(chatId, st);
-
+        
         try {
           await models.User.update(
             {
@@ -1460,25 +1460,63 @@ async function handleUpdate(req, res) {
         return;
       }
 
-      if (message.contact && message.contact.phone_number) {
-        const st = userStateById.get(chatId) || {};
-        st.phone = message.contact.phone_number;
-        st.expected = "location";
-        userStateById.set(chatId, st);
-
-        try {
-          await models.User.update({ phone: st.phone }, { where: { chatId } });
-        } catch (e) {
-          console.error("Sequelize update (phone) failed:", e.message || e);
-        }
-
-        await sendMessage(chatId, "Rahmat! Raqamingiz qabul qilindi ✅");
-        await askLocation(chatId);
+      // Handle first name input
+      const state = userStateById.get(chatId) || {};
+      if (state.expected === "first_name" && text) {
+        state.userData = state.userData || {};
+        state.userData.firstName = text.trim();
+        state.expected = "last_name";
+        userStateById.set(chatId, state);
+        
+        await sendMessage(chatId, "Familiyangizni kiriting:");
         res.sendStatus(200);
         return;
       }
 
-      const state = userStateById.get(chatId) || {};
+      // Handle last name input
+      if (state.expected === "last_name" && text) {
+        state.userData.lastName = text.trim();
+        state.expected = "phone";
+        userStateById.set(chatId, state);
+        
+        // Update user with full name
+        const fullName = `${state.userData.firstName} ${state.userData.lastName}`.trim();
+        try {
+          await models.User.update(
+            { fullName },
+            { where: { chatId } }
+          );
+          await sendMessage(chatId, `Ism-familiyangiz saqlandi: ${fullName}`);
+          await askPhone(chatId);
+        } catch (e) {
+          console.error("Failed to save user name:", e);
+          await sendMessage(chatId, "Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+        }
+        res.sendStatus(200);
+        return;
+      }
+
+      // Handle phone number input
+      if (message.contact && message.contact.phone_number && state.expected === "phone") {
+        const phone = message.contact.phone_number;
+        state.expected = "location";
+        userStateById.set(chatId, state);
+
+        try {
+          await models.User.update(
+            { phone },
+            { where: { chatId } }
+          );
+          await sendMessage(chatId, "Rahmat! Raqamingiz qabul qilindi ✅");
+          await askLocation(chatId);
+        } catch (e) {
+          console.error("Failed to save phone:", e);
+          await sendMessage(chatId, "Telefon raqamingizni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+        }
+        res.sendStatus(200);
+        return;
+      }
+
 
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
         await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
@@ -1490,10 +1528,6 @@ async function handleUpdate(req, res) {
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
         const telegramId = from.id;
-        const fullName = [from.first_name, from.last_name]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
         const username = from.username || null;
 
         try {
@@ -1520,19 +1554,22 @@ async function handleUpdate(req, res) {
             return;
           }
 
+          // Create user with minimal info first
           const newUser = await models.User.create({
             telegramId,
             chatId,
-            fullName,
             username,
           });
 
-          userStateById.set(chatId, { expected: "phone" });
+          // Ask for first name
+          userStateById.set(chatId, { 
+            expected: "first_name",
+            userData: { telegramId, chatId, username }
+          });
           await sendMessage(
             chatId,
-            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tamiz.`
+            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tish uchun quyidagi ma'lumotlarni kiriting.\n\nIltimos, ismingizni kiriting:`
           );
-          await askPhone(chatId);
           res.sendStatus(200);
           return;
         } catch (e) {
