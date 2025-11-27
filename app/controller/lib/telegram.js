@@ -298,18 +298,8 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
     const allOrders = await getCourierOrdersByChatId(chatId);
 
     if (!allOrders || allOrders.length === 0) {
-      const text = "Sizda buyurtmalar topilmadi.";
-      if (messageId) {
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: messageId,
-          text: text,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [] },
-        });
-      } else {
-        await sendMessage(chatId, text);
-      }
+      // If no orders, just send a new message below the existing one
+      await sendMessage(chatId, "Sizda buyurtmalar topilmadi.");
       return;
     }
 
@@ -634,21 +624,25 @@ async function askLocation(chatId) {
 async function homeMenu(chatId) {
   await sendMessage(chatId, "Bosh sahifa:", {
     reply_markup: {
-      keyboard: [[{ text: "Buyurtmalarim 📑" }],
-      [{ text: "Tilni o'zgartirish 🌐" }]
-    ],
+      inline_keyboard: [
+        [
+          { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
+          { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+        ]
+      ],
       resize_keyboard: true,
-      one_time_keyboard: false,
     },
   });
 }
 
 async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   const reply_markup = {
-    keyboard: [[{ text: "Buyurtmalarim 📑" }],
-    [{ text: "Tilni o'zgartirish 🌐" }]],
-    resize_keyboard: true,
-    one_time_keyboard: false,
+    inline_keyboard: [
+      [
+        { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
+        { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+      ]
+    ]
   };
 
   if (extra.message_id) {
@@ -681,13 +675,52 @@ async function handleUpdate(req, res) {
       const cq = update.callback_query;
       const chatId = cq.message.chat.id;
       const data = cq.data;
+      const messageId = cq.message.message_id;
 
-      if (data === "confirm_yes") {
+      // Answer the callback query to remove the loading state
+      await telegram.post("/answerCallbackQuery", {
+        callback_query_id: cq.id,
+      });
+
+      if (data === "my_orders") {
+        await sendCourierOrdersList(chatId, 1, messageId);
+        res.sendStatus(200);
+        return;
+      } else if (data === "change_language") {
+        await sendMessage(chatId, "🌐 Tilni tanlang:", {
+          reply_markup: {
+            inline_keyboard: [
+              [{
+                text: "🇺🇿 O'zbek (Lotin)",
+                callback_data: "lang_uz_latn"
+              }],
+              [{
+                text: "🇺🇿 Ўзбек (Кирилл)",
+                callback_data: "lang_uz_cyrl"
+              }]
+            ]
+          }
+        });
+        res.sendStatus(200);
+        return;
+      } else if (data === "lang_uz_latn") {
+        await sendMessage(chatId, "Til muvaffaqiyatli o'zgartirildi!");
+        res.sendStatus(200);
+        return;
+      } else if (data === "lang_uz_cyrl") {
+        await sendMessage(chatId, "Тил муваффақиятли ўзгартирилди!");
+        res.sendStatus(200);
+        return;
+      } else if (data === "confirm_yes") {
         userStateById.set(chatId, {});
         await sendHomeMenuWithMessage(chatId, "Ma'lumotlar tasdiqlandi ✅");
+        res.sendStatus(200);
+        return;
       } else if (data === "order_confirm_yes") {
         // legacy no-op: ignore bare confirm without identifiers
         // Backward compatibility: previous format didn't include customer chat id.
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("order_confirm_yes:")) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
@@ -1337,6 +1370,8 @@ async function handleUpdate(req, res) {
       const chatId = message.chat.id;
       const text = typeof message.text === "string" ? message.text.trim() : "";
 
+
+      // Keep the old text commands for backward compatibility
       if (
         text === "/orders" ||
         text === "Buyurtmalarim 📑" ||
@@ -1360,16 +1395,22 @@ async function handleUpdate(req, res) {
       ) {
         await sendMessage(chatId, "🌐 Tilni tanlang:", {
           reply_markup: {
-            keyboard: [
-              [{ text: "🇺🇿 O'zbek (Lotin)" }],
-              [{ text: "🇺🇿 Ўзбек (Кирилл)" }]
+            inline_keyboard: [
+              [
+                {
+                  text: "🇺🇿 O'zbek (Lotin)",
+                  callback_data: "lang_uz_latn",
+                },
+              ],
+              [
+                {
+                  text: "🇺🇿 Ўзбек (Кирилл)",
+                  callback_data: "lang_uz_cyrl",
+                },
+              ],
             ],
-            resize_keyboard: true
-          }
+          },
         });
-      
-        res.sendStatus(200);
-        return;
       } 
 
       let responseJson = null
@@ -1544,9 +1585,12 @@ async function handleUpdate(req, res) {
                 `👤Ismingiz: ${existingUser.fullName || "—"}`,
               {
                 reply_markup: {
-                  keyboard: [[{ text: "Buyurtmalarim 📑" }],
-                  [{ text: "Tilni o'zgartirish 🌐" }]],
-                  resize_keyboard: true,
+                  inline_keyboard: [
+                    [
+                      { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
+                      { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+                    ]
+                  ]
                 },
               }
             );
