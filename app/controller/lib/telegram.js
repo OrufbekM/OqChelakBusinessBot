@@ -11,10 +11,10 @@ const {
   createCourierOrderRecord, 
   getNextCourierForOrder,
   clearOrderAssignment,
-  getOrderAssignment,
   markOrderAccepted,
 } = require("../verification.controller");
 const axios = require("axios");
+const { inlineKeyboard } = require("telegraf/markup");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const STATUS_API_BASE =
@@ -22,8 +22,6 @@ const STATUS_API_BASE =
   "https://zymogenic-edmond-lamellately.ngrok-free.dev";
 
 const userStateById = new Map();
-const PAGE_SIZE = 3;
-const MAX_COURIER_HISTORY = 10;
 
 const ORDER_STATUS_EMOJI = {
   pending: "⏳",
@@ -87,30 +85,35 @@ function toNumericId(value) {
   return null;
 }
 
-function formatUzDate(dt) {
-  try {
-    const d = new Date(dt);
-    const day = d.getDate();
-    const months = [
-      "yanvar",
-      "fevral",
-      "mart",
-      "aprel",
-      "may",
-      "iyun",
-      "iyul",
-      "avgust",
-      "sentyabr",
-      "oktyabr",
-      "noyabr",
-      "dekabr",
-    ];
-    const month = months[d.getMonth()] || "";
-    const year = d.getFullYear();
-    return `${day}-${month} ${year}`;
-  } catch (_) {
-    return "";
+// Format phone number to +998 format
+function formatPhoneNumber(phone) {
+  if (!phone) return null;
+  
+  // Remove all non-digit characters
+  const cleaned = phone.replace(/\D/g, '');
+  
+  // If it's 9 digits, add +998 prefix
+  if (cleaned.length === 9 && /^[9]\d{8}$/.test(cleaned)) {
+    return '+998' + cleaned;
   }
+  
+  // If it's 12 digits and starts with 998, add + prefix
+  if (cleaned.length === 12 && /^998\d{9}$/.test(cleaned)) {
+    return '+' + cleaned;
+  }
+  
+  // If it's 13 digits and starts with +998, return as is
+  if (cleaned.length === 13 && /^\+998\d{9}$/.test(phone)) {
+    return phone;
+  }
+  
+  // If it doesn't match any pattern, return null
+  return null;
+}
+
+// Validate phone number
+function isValidPhoneNumber(phone) {
+  return formatPhoneNumber(phone) !== null;
 }
 
 // Build order notification text with geocoded address and maps link
@@ -198,10 +201,6 @@ function getWebhookPath() {
   return BOT_TOKEN ? `/webhook/${BOT_TOKEN}` : `/webhook`;
 }
 
-function formatPriceWithComma(price) {
-  return price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
 function escapeHtml(value) {
   if (value === null || value === undefined) return "";
   return String(value)
@@ -210,14 +209,6 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function beautifyStatus(status) {
-  const normalized = (status || "").toString().toLowerCase();
-  const emoji = ORDER_STATUS_EMOJI[normalized] || "ℹ️";
-  const label =
-    normalized.charAt(0).toUpperCase() + normalized.slice(1) || "Unknown";
-  return `${emoji} ${label}`;
 }
 
 function getCourierOrderUniqueKey(order = {}) {
@@ -292,13 +283,12 @@ async function getCourierOrdersByChatId(chatId, limit = null) {
   return models.CourierOrder.findAll(options);
 }
 
-// Send short list of orders (just names and liters)
-async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
+// Send each order as a separate message without pagination
+async function sendCourierOrdersList(chatId) {
   try {
     const allOrders = await getCourierOrdersByChatId(chatId);
 
     if (!allOrders || allOrders.length === 0) {
-      // If no orders, just send a new message below the existing one
       await sendMessage(chatId, "Sizda buyurtmalar topilmadi.");
       return;
     }
@@ -316,109 +306,37 @@ async function sendCourierOrdersList(chatId, page = 1, messageId = null) {
       uniqueOrders.push(order);
     }
 
-    const ORDERS_PER_PAGE = 5;
-    const totalPages = Math.ceil(uniqueOrders.length / ORDERS_PER_PAGE);
-    const currentPage = Math.max(1, Math.min(page, totalPages));
-    const startIndex = (currentPage - 1) * ORDERS_PER_PAGE;
-    const endIndex = Math.min(
-      startIndex + ORDERS_PER_PAGE,
-      uniqueOrders.length
-    );
-    const pageOrders = uniqueOrders.slice(startIndex, endIndex);
-
-    const orderLines = pageOrders.map((order) => {
-      const name = order.productName || "Mahsulot nomi topilmadi";
-      const liters =
-        order.liters !== null && order.liters !== undefined
-          ? Number(order.liters).toFixed(1)
-          : "—";
-      const addr = order.address || "—";
-      return `${name}— ${liters} L (${addr})`;
-    });
-
-    const listText = `Buyurtmalar Ro'yhati:\n${orderLines.join("\n")}`;
-
-    // Build inline keyboard with pagination (mobile-friendly)
-    const inline_keyboard = [];
-
-    // Numbered order buttons: max 5 per row for compact, symmetric layout
-    const numberButtons = [];
-    for (let i = 0; i < pageOrders.length; i++) {
-      const order = pageOrders[i];
-      numberButtons.push({
-        text: `${i + 1}`,
-        callback_data: `courier_order_view:${order.id}`,
-      });
-    }
-    // chunk into rows of 5
-    for (let i = 0; i < numberButtons.length; i += 5) {
-      inline_keyboard.push(numberButtons.slice(i, i + 5));
-    }
-
-    // Navigation row: Prev / Close / Next
-    const navRow = [];
-    if (currentPage > 1) {
-      navRow.push({
-        text: "◀️",
-        callback_data: `courier_orders_page:${currentPage - 1}`,
-      });
-    }
-    // Close button always visible to dismiss the list message
-    navRow.push({ text: "❌", callback_data: "courier_orders_close" });
-    if (currentPage < totalPages) {
-      navRow.push({
-        text: "▶️",
-        callback_data: `courier_orders_page:${currentPage + 1}`,
-      });
-    }
-    if (navRow.length > 0) {
-      inline_keyboard.push(navRow);
-    }
-
-    const replyMarkup = {
-      inline_keyboard: inline_keyboard,
-    };
-
-    if (messageId) {
-      try {
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: messageId,
-          text: listText,
-          parse_mode: "HTML",
-          reply_markup: replyMarkup,
-        });
-      } catch (e) {
-        // If editing fails (e.g., message deleted), send a fresh one
-        const newMessageId = await sendMessage(chatId, listText, {
-          reply_markup: replyMarkup,
-        });
-        if (newMessageId) {
-          userStateById.set(chatId, {
-            ...userStateById.get(chatId),
-            ordersListMessageId: newMessageId,
-          });
-        }
+    // Send each order as a separate message
+    for (const order of uniqueOrders) {
+      const orderText = formatCourierOrderForMessage(order, order.status !== "completed");
+      
+      // Build inline keyboard for each order
+      const inline_keyboard = [];
+      
+      if (order.status !== "completed") {
+        inline_keyboard.push([
+          {
+            text: "Yetkazildi ✅",
+            callback_data: `order_delivered:${order.id}`,
+          },
+          {
+            text: "Yetkazilmadi ❌",
+            callback_data: `order_not_delivered:${order.id}`,
+          },
+        ]);
       }
-    } else {
-      const newMessageId = await sendMessage(chatId, listText, {
-        reply_markup: replyMarkup,
+
+      await sendMessage(chatId, orderText, {
+        reply_markup: { inline_keyboard }
       });
-      // Store messageId for future edits
-      if (newMessageId) {
-        userStateById.set(chatId, {
-          ...userStateById.get(chatId),
-          ordersListMessageId: newMessageId,
-        });
-      }
     }
+
   } catch (e) {
     console.error("sendCourierOrdersList failed:", e.message || e);
     await sendMessage(chatId, "Buyurtmalarni ko'rsatishda xatolik yuz berdi.");
   }
 }
 
-// Send detailed view of a specific order
 async function sendCourierOrderDetails(
   chatId,
   orderId,
@@ -602,7 +520,7 @@ async function sendMessage(chatId, text, extra) {
 }
 
 async function askPhone(chatId) {
-  await sendMessage(chatId, "Iltimos, raqamingizni ulashing:", {
+  await sendMessage(chatId, "Iltimos, raqamingizni ulashing yoki raqamni kiriting (masalan: 909993394):", {
     reply_markup: {
       keyboard: [[{ text: "Raqamni ulashish 📱", request_contact: true }]],
       resize_keyboard: true,
@@ -612,9 +530,11 @@ async function askPhone(chatId) {
 }
 
 async function askLocation(chatId) {
-  await sendMessage(chatId, "Iltimos, manzilingizni ulashing:", {
+  await sendMessage(chatId, "Iltimos, manzilingizni ulashing: ", {
     reply_markup: {
-      keyboard: [[{ text: "Manzilni ulashish 📍", request_location: true }]],
+      keyboard: [
+        [{ text: "Manzilni ulashish 📍", request_location: true }],
+      ],
       resize_keyboard: true,
       one_time_keyboard: true,
     },
@@ -683,9 +603,10 @@ async function handleUpdate(req, res) {
       });
 
       if (data === "my_orders") {
-        await sendCourierOrdersList(chatId, 1, messageId);
+        await sendCourierOrdersList(chatId);
         res.sendStatus(200);
         return;
+
       } else if (data === "change_language") {
         await sendMessage(chatId, "🌐 Tilni tanlang:", {
           reply_markup: {
@@ -713,12 +634,10 @@ async function handleUpdate(req, res) {
         return;
       } else if (data === "confirm_yes") {
         userStateById.set(chatId, {});
-        await sendHomeMenuWithMessage(chatId, "Ma'lumotlar tasdiqlandi ✅");
+        await sendHomeMenuWithMessage(chatId, "Ma'lumotlar tasdiqlandi ✅: \n\nBosh sahifa:");
         res.sendStatus(200);
         return;
       } else if (data === "order_confirm_yes") {
-        // legacy no-op: ignore bare confirm without identifiers
-        // Backward compatibility: previous format didn't include customer chat id.
         res.sendStatus(200);
         return;
       } else if (data.startsWith("order_confirm_yes:")) {
@@ -731,13 +650,23 @@ async function handleUpdate(req, res) {
             : null;
         const confirmationMessageId = cq.message.message_id;
 
-        // Edit seller's inline message
+
+        // Edit seller's inline message - ADD BUYURTMALARIM BUTTON
         await telegram.post("/editMessageText", {
           chat_id: chatId,
           message_id: confirmationMessageId,
           text: "Buyurtma qabul qilindi ✅",
           parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [] },
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Buyurtmalarim 📑",
+                  callback_data: "my_orders"
+                }
+              ]
+            ]
+          },
         });
 
         // Get order details from message text
@@ -836,7 +765,7 @@ async function handleUpdate(req, res) {
             : null;
 
         if (!existingOrder && customer) {
-          // Create new CourierOrder record if it doesn't exist
+          // Create new CourierOrder record ONLY if it doesn't exist
           try {
             await createCourierOrderRecord({
               courierChatId: chatId,
@@ -892,13 +821,15 @@ async function handleUpdate(req, res) {
             ? parseInt(rawOrderId, 10)
             : null;
         const confirmationMessageId = cq.message.message_id;
+        
+        // Edit seller's inline message - ADD BUYURTMALARIM BUTTON
         await telegram.post("/editMessageText", {
           chat_id: chatId,
           message_id: confirmationMessageId,
           text: "Buyurtma bekor qilindi ❌",
           parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [] },
         });
+        
         if (
           customerChatId &&
           (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
@@ -993,12 +924,7 @@ async function handleUpdate(req, res) {
                 `Status yangilashda xatolik ❌ (userId=${customerChatId}, orderId=${resolvedOrderNumber}): cancelled`
               );
             }
-          } else {
-            await sendMessage(
-              chatId,
-              "Status yangilab bo'lmadi: noto'g'ri identifikatorlar."
-            );
-          }
+          } 
 
           if (normalizedOrderId) {
             clearOrderAssignment(normalizedOrderId);
@@ -1265,18 +1191,7 @@ async function handleUpdate(req, res) {
               message_id: messageId,
               text: fullText,
               parse_mode: "HTML",
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: "Orqaga ↩️",
-                      callback_data: `courier_orders_back:${
-                        ordersListMessageId || ""
-                      }`,
-                    },
-                  ],
-                ],
-              },
+              
             });
 
             await telegram.post("/answerCallbackQuery", {
@@ -1298,7 +1213,7 @@ async function handleUpdate(req, res) {
         if (res) res.sendStatus(200);
         return;
       } else if (data.startsWith("order_not_delivered:")) {
-        // Courier reported “No” – keep status and send a reminder
+        // Courier reported "No" - keep status and send a reminder
         await sendMessage(
           chatId,
           "Iltimos, buyurtmani tezroq yetkazib bering 📦"
@@ -1370,7 +1285,6 @@ async function handleUpdate(req, res) {
       const chatId = message.chat.id;
       const text = typeof message.text === "string" ? message.text.trim() : "";
 
-
       // Keep the old text commands for backward compatibility
       if (
         text === "/orders" ||
@@ -1435,6 +1349,50 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
         }
+
+      // Handle location input as text
+      const state = userStateById.get(chatId) || {};
+      if (state.expected === "location_text" && text) {
+        try {
+          // Save the text address
+          await models.User.update(
+            {
+              address: text,
+              currentLocation: "text",
+            },
+            { where: { chatId } }
+          );
+
+          const user = await models.User.findOne({ where: { chatId } });
+          const uname = user?.username ? `@${user.username}` : "—";
+          const fullName = user?.fullName || "—";
+          const phone = user?.phone || "—";
+          const address = user?.address || "—";
+
+          await sendMessage(
+            chatId,
+            `Ma'lumotlaringiz:\nUsername: ${uname}\nFull name: ${fullName}\nTelefon: ${phone}\nManzil: ${address}\n\nMa'lumotlar to'g'rimi?`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "Ha ✅", callback_data: "confirm_yes" },
+                    { text: "Yo'q ❌", callback_data: "confirm_no" },
+                  ],
+                ],
+              },
+            }
+          );
+          
+          state.expected = null;
+          userStateById.set(chatId, state);
+        } catch (e) {
+          console.error("Failed to save text address:", e);
+          await sendMessage(chatId, "Manzilni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+        }
+        res.sendStatus(200);
+        return;
+      }
 
       if (message.location && typeof message.location.latitude === "number") {
         const st = userStateById.get(chatId) || {};
@@ -1501,8 +1459,41 @@ async function handleUpdate(req, res) {
         return;
       }
 
+      // Handle phone number input as text
+      if (state.expected === "phone" && text) {
+        let phone = text.trim();
+        
+        // Format phone number
+        const formattedPhone = formatPhoneNumber(phone);
+        
+        if (!formattedPhone) {
+          await sendMessage(
+            chatId,
+            "Iltimos, to'g'ri telefon raqam kiriting (masalan: 909993394) yoki 'Raqamni ulashish' tugmasini bosing."
+          );
+          res.sendStatus(200);
+          return;
+        }
+
+        state.expected = "location";
+        userStateById.set(chatId, state);
+
+        try {
+          await models.User.update(
+            { phone: formattedPhone },
+            { where: { chatId } }
+          );
+          await sendMessage(chatId, `Rahmat! Raqamingiz qabul qilindi: ${formattedPhone} ✅`);
+          await askLocation(chatId);
+        } catch (e) {
+          console.error("Failed to save phone:", e);
+          await sendMessage(chatId, "Telefon raqamingizni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+        }
+        res.sendStatus(200);
+        return;
+      }
+
       // Handle first name input
-      const state = userStateById.get(chatId) || {};
       if (state.expected === "first_name" && text) {
         state.userData = state.userData || {};
         state.userData.firstName = text.trim();
@@ -1537,7 +1528,7 @@ async function handleUpdate(req, res) {
         return;
       }
 
-      // Handle phone number input
+      // Handle phone number input via contact
       if (message.contact && message.contact.phone_number && state.expected === "phone") {
         const phone = message.contact.phone_number;
         state.expected = "location";
@@ -1558,6 +1549,14 @@ async function handleUpdate(req, res) {
         return;
       }
 
+      // Handle "Manzilni yozish" button
+      if (text === "Manzilni yozish ✍️") {
+        state.expected = "location_text";
+        userStateById.set(chatId, state);
+        await sendMessage(chatId, "Iltimos, manzilingizni to'liq matn shaklida yuboring:");
+        res.sendStatus(200);
+        return;
+      }
 
       if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
         await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
@@ -1570,13 +1569,19 @@ async function handleUpdate(req, res) {
         const from = message.from || {};
         const telegramId = from.id;
         const username = from.username || null;
-
+      
         try {
           const existingUser = await models.User.findOne({
             where: { telegramId },
           });
-
-          if (existingUser) {
+      
+          // Check if user has completed all required registration steps
+          const hasCompletedRegistration = existingUser && 
+                                         existingUser.fullName && 
+                                         existingUser.phone && 
+                                         (existingUser.address || (existingUser.latitude && existingUser.longitude));
+      
+          if (hasCompletedRegistration) {
             await sendMessage(
               chatId,
               `Hisobga kirildi✅:\n\n` +
@@ -1597,25 +1602,61 @@ async function handleUpdate(req, res) {
             res.sendStatus(200);
             return;
           }
-
-          // Create user with minimal info first
-          const newUser = await models.User.create({
-            telegramId,
-            chatId,
-            username,
-          });
-
-          // Ask for first name
-          userStateById.set(chatId, { 
-            expected: "first_name",
-            userData: { telegramId, chatId, username }
-          });
+      
+          // If user exists but registration is incomplete, continue from where they left off
+          if (existingUser) {
+            let nextStep = "";
+            
+            if (!existingUser.fullName) {
+              nextStep = "first_name";
+              userStateById.set(chatId, { 
+                expected: "first_name",
+                userData: { telegramId, chatId, username }
+              });
+              await sendMessage(chatId, `Ro'yhatdan o'tishni davom ettiramiz. Iltimos, ismingizni kiriting:`);
+            } else if (!existingUser.phone) {
+              nextStep = "phone";
+              userStateById.set(chatId, { 
+                expected: "phone",
+                userData: { telegramId, chatId, username }
+              });
+              await askPhone(chatId);
+            } else if (!existingUser.address && !(existingUser.latitude && existingUser.longitude)) {
+              nextStep = "location";
+              userStateById.set(chatId, { 
+                expected: "location",
+                userData: { telegramId, chatId, username }
+              });
+              await askLocation(chatId);
+            }
+      
+            if (nextStep) {
+              res.sendStatus(200);
+              return;
+            }
+          }
+      
+          // If no existing user or something went wrong, create new user
+          if (!existingUser) {
+            const newUser = await models.User.create({
+              telegramId,
+              chatId,
+              username,
+            });
+      
+            userStateById.set(chatId, { 
+              expected: "first_name",
+              userData: { telegramId, chatId, username }
+            });
+          }
+      
           await sendMessage(
             chatId,
             `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tish uchun quyidagi ma'lumotlarni kiriting.\n\nIltimos, ismingizni kiriting:`
           );
           res.sendStatus(200);
           return;
+          
         } catch (e) {
           console.error("Sequelize start handler failed:", e.message || e);
           await sendMessage(
