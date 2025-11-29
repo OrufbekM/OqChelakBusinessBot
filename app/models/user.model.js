@@ -48,6 +48,15 @@ module.exports = (sequelize, Sequelize) => {
         type: Sequelize.DECIMAL(10, 2),
         allowNull: true,
       },
+      address: {
+        type: Sequelize.TEXT,
+        allowNull: true,
+      },
+      language: {
+        type: Sequelize.STRING,
+        defaultValue: 'uz',
+        allowNull: false,
+      },
     },
     {
       timestamps: true,

@@ -16,6 +16,8 @@ const {
 const axios = require("axios");
 const { inlineKeyboard } = require("telegraf/markup");
 
+const { t, changeLanguage } = require("../../config/i18n");
+
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const STATUS_API_BASE =
   process.env.STATUS_API_BASE ||
@@ -29,6 +31,73 @@ const ORDER_STATUS_EMOJI = {
   completed: "✅",
   cancelled: "❌",
 };
+
+// Helper function to get user's language
+async function getUserLanguage(chatId) {
+  try {
+    const user = await models.User.findOne({ where: { chatId } });
+    return user?.language || 'uz';
+  } catch (error) {
+    return 'uz';
+  }
+}
+
+// Helper function to translate text
+async function translate(chatId, key, data = {}) {
+  try {
+    const language = await getUserLanguage(chatId);
+    // Use the async t() function from i18n
+    return await t(key, { lng: language, ...data });
+  } catch (error) {
+    console.error(`Error translating key "${key}":`, error);
+    return key; // Return the key as fallback
+  }
+}
+
+// Helper function to send translated message
+async function sendTranslatedMessage(chatId, key, extra = {}, data = {}) {
+  try {
+    const text = await translate(chatId, key, data);
+    return await sendMessage(chatId, text, extra);
+  } catch (error) {
+    console.error('Error in sendTranslatedMessage:', error);
+    // Fallback to key if translation fails
+    return await sendMessage(chatId, key, extra);
+  }
+}
+
+// Helper to get translated keyboard text
+async function getTranslatedKeyboard(chatId) {
+  try {
+    return {
+      phone_share: await translate(chatId, 'phone_share'),
+      location_share: await translate(chatId, 'location_share'),
+      write_location: await translate(chatId, 'write_location'),
+      back: await translate(chatId, 'back'),
+      yes: await translate(chatId, 'yes'),
+      no: await translate(chatId, 'no'),
+      delivered: await translate(chatId, 'delivered'),
+      not_delivered: await translate(chatId, 'not_delivered'),
+      my_orders: await translate(chatId, 'my_orders'),
+      change_language: await translate(chatId, 'change_language')
+    };
+  } catch (error) {
+    console.error('Error getting translated keyboard:', error);
+    // Fallback to Uzbek Latin if there's an error
+    return {
+      phone_share: "Raqamni ulashish 📱",
+      location_share: "Manzilni ulashish 📍",
+      write_location: "Manzilni yozish ✍️",
+      back: "Orqaga ↩️",
+      yes: "Ha ✅",
+      no: "Yo'q ❌",
+      delivered: "Yetkazildi ✅",
+      not_delivered: "Yetkazilmadi ❌",
+      my_orders: "Buyurtmalarim 📑",
+      change_language: "Tilni o'zgartirish 🌐"
+    };
+  }
+}
 
 function isValidExternalOrderId(orderId) {
   if (orderId === null || orderId === undefined) return false;
@@ -150,16 +219,15 @@ async function buildOrderNotificationText(
     console.error("buildOrderNotificationText failed:", e.message || e);
   }
 
-  locationText = `<a href="${escapeHtml(mapsUrl)}">Ko'rish uchun bosing</a>`;
+  const viewOnMap = await translate(customerChatId, 'view_on_map');
+  const locationText = `<a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
 
-  return (
-    `📦 Mahsulot xabari\n\n` +
-    `📦 Mahsulot: ${name}\n` +
-    `📏 Miqdor: ${qty}\n` +
-    `📍 Manzili: ${address}\n` +
-    `🗺️ Lokatsiya: ${locationText}\n\n` +
-    `Buyurtmani qabul qilasizmi?`
-  );
+  return await translate(customerChatId, 'order_notification', {
+    productName: name,
+    quantity: qty,
+    address: address,
+    location: locationText
+  });
 }
 
 // Send order request to seller with inline confirm/cancel buttons
@@ -181,14 +249,17 @@ async function notifySellerAboutOrder({
       longitude,
     }
   );
+  
+  const keyboardText = await getTranslatedKeyboard(sellerChatId);
+  
   const inline_keyboard = [
     [
       {
-        text: "Ha ✅",
+        text: keyboardText.yes,
         callback_data: `order_confirm_yes:${customerChatId}:${orderId || ""}`,
       },
       {
-        text: "Yo'q ❌",
+        text: keyboardText.no,
         callback_data: `order_confirm_no:${customerChatId}:${orderId || ""}`,
       },
     ],
@@ -227,7 +298,7 @@ function getCourierOrderUniqueKey(order = {}) {
   return null;
 }
 
-function formatCourierOrderForMessage(order, showQuestion = true) {
+async function formatCourierOrderForMessage(chatId, order, showQuestion = true) {
   const productName = escapeHtml(order.productName || "—");
   const liters =
     order.liters !== null && order.liters !== undefined
@@ -236,21 +307,30 @@ function formatCourierOrderForMessage(order, showQuestion = true) {
   const address = escapeHtml(order.address || "—");
   const phone = escapeHtml(order.phone || "—");
   const customerName = escapeHtml(order.customerName || "—");
-  const orderNameLine = `📦 Buyurtma nomi: ${productName}`;
-  const litersLine = `🥛 Litr: ${liters}`;
-  const addressLine = `📍 Manzil: ${address}`;
-  const phoneLine = `📞 Telefon: ${phone}`;
-  const customerLine = `👤 Mijoz: ${customerName}`;
-  let locationLine = "🗺️ Lokatsiya: —";
+  
+  const orderName = await translate(chatId, 'order_name');
+  const litersText = await translate(chatId, 'liters');
+  const addressText = await translate(chatId, 'address');
+  const phoneText = await translate(chatId, 'phone');
+  const customerText = await translate(chatId, 'customer');
+  const locationText = await translate(chatId, 'location');
+  const viewOnMap = await translate(chatId, 'view_on_map');
+  
+  const orderNameLine = `📦 ${orderName}: ${productName}`;
+  const litersLine = `🥛 ${litersText}: ${liters}`;
+  const addressLine = `📍 ${addressText}: ${address}`;
+  const phoneLine = `📞 ${phoneText}: ${phone}`;
+  const customerLine = `👤 ${customerText}: ${customerName}`;
+  
+  let locationLine = `🗺️ ${locationText}: —`;
   const mapsUrl =
     order.mapsUrl ||
     (order.latitude && order.longitude
       ? `https://maps.google.com/?q=${order.latitude},${order.longitude}`
       : null);
+      
   if (mapsUrl) {
-    locationLine = `🗺️ Lokatsiya: <a href="${escapeHtml(
-      mapsUrl
-    )}">Ko'rish uchun bosing</a>`;
+    locationLine = `🗺️ ${locationText}: <a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
   }
 
   const parts = [
@@ -263,7 +343,8 @@ function formatCourierOrderForMessage(order, showQuestion = true) {
   ];
 
   if (showQuestion) {
-    parts.push(`\nBuyurtma Yetkazildimi?`);
+    const deliveryQuestion = await translate(chatId, 'order_delivery_question');
+    parts.push(`\n${deliveryQuestion}`);
   }
 
   return parts.filter(Boolean).join("\n");
@@ -289,7 +370,7 @@ async function sendCourierOrdersList(chatId) {
     const allOrders = await getCourierOrdersByChatId(chatId);
 
     if (!allOrders || allOrders.length === 0) {
-      await sendMessage(chatId, "Sizda buyurtmalar topilmadi.");
+      await sendTranslatedMessage(chatId, 'no_orders');
       return;
     }
 
@@ -306,9 +387,11 @@ async function sendCourierOrdersList(chatId) {
       uniqueOrders.push(order);
     }
 
+    const keyboardText = await getTranslatedKeyboard(chatId);
+
     // Send each order as a separate message
     for (const order of uniqueOrders) {
-      const orderText = formatCourierOrderForMessage(order, order.status !== "completed");
+      const orderText = await formatCourierOrderForMessage(chatId, order, order.status !== "completed");
       
       // Build inline keyboard for each order
       const inline_keyboard = [];
@@ -316,11 +399,11 @@ async function sendCourierOrdersList(chatId) {
       if (order.status !== "completed") {
         inline_keyboard.push([
           {
-            text: "Yetkazildi ✅",
+            text: keyboardText.delivered,
             callback_data: `order_delivered:${order.id}`,
           },
           {
-            text: "Yetkazilmadi ❌",
+            text: keyboardText.not_delivered,
             callback_data: `order_not_delivered:${order.id}`,
           },
         ]);
@@ -333,7 +416,7 @@ async function sendCourierOrdersList(chatId) {
 
   } catch (e) {
     console.error("sendCourierOrdersList failed:", e.message || e);
-    await sendMessage(chatId, "Buyurtmalarni ko'rsatishda xatolik yuz berdi.");
+    await sendTranslatedMessage(chatId, 'orders_error');
   }
 }
 
@@ -346,7 +429,7 @@ async function sendCourierOrderDetails(
     const order = await models.CourierOrder.findByPk(orderId);
 
     if (!order) {
-      await sendMessage(chatId, "Buyurtma topilmadi.");
+      await sendTranslatedMessage(chatId, 'order_not_found');
       return;
     }
 
@@ -355,17 +438,20 @@ async function sendCourierOrderDetails(
     const orderIndex = allOrders.findIndex((o) => o.id === orderId);
     const orderNumber =
       orderIndex !== -1
-        ? `${orderIndex + 1}. ${order.productName || "Mahsulot"} ${
+        ? `${orderIndex + 1}. ${order.productName || await translate(chatId, 'product')} ${
             order.liters ? `${order.liters}L` : ""
           }`
         : "";
 
     // Format order details
-    const orderText = formatCourierOrderForMessage(
+    const orderText = await formatCourierOrderForMessage(
+      chatId,
       order,
       order.status !== "completed"
     );
     const fullText = orderNumber ? `${orderNumber}\n\n${orderText}` : orderText;
+
+    const keyboardText = await getTranslatedKeyboard(chatId);
 
     // Build inline keyboard
     const inline_keyboard = [];
@@ -374,13 +460,13 @@ async function sendCourierOrderDetails(
     if (order.status !== "completed") {
       inline_keyboard.push([
         {
-          text: "Ha ✅",
+          text: keyboardText.yes,
           callback_data: `order_delivered:${order.id}:${
             ordersListMessageId || ""
           }`,
         },
         {
-          text: "Yo'q ❌",
+          text: keyboardText.no,
           callback_data: `order_not_delivered:${order.id}:${
             ordersListMessageId || ""
           }`,
@@ -391,7 +477,7 @@ async function sendCourierOrderDetails(
     // Back button to return to list (also serves as close)
     inline_keyboard.push([
       {
-        text: "Orqaga ↩️",
+        text: keyboardText.back,
         callback_data: `courier_orders_back:${ordersListMessageId || ""}`,
       },
     ]);
@@ -403,10 +489,7 @@ async function sendCourierOrderDetails(
     await sendMessage(chatId, fullText, { reply_markup: replyMarkup });
   } catch (e) {
     console.error("sendCourierOrderDetails failed:", e.message || e);
-    await sendMessage(
-      chatId,
-      "Buyurtma ma'lumotlarini ko'rsatishda xatolik yuz berdi."
-    );
+    await sendTranslatedMessage(chatId, 'order_details_error');
   }
 }
 
@@ -520,9 +603,11 @@ async function sendMessage(chatId, text, extra) {
 }
 
 async function askPhone(chatId) {
-  await sendMessage(chatId, "Iltimos, raqamingizni ulashing yoki raqamni kiriting (masalan: 909993394):", {
+  const keyboardText = await getTranslatedKeyboard(chatId);
+  
+  await sendTranslatedMessage(chatId, 'ask_phone', {
     reply_markup: {
-      keyboard: [[{ text: "Raqamni ulashish 📱", request_contact: true }]],
+      keyboard: [[{ text: keyboardText.phone_share, request_contact: true }]],
       resize_keyboard: true,
       one_time_keyboard: true,
     },
@@ -530,10 +615,13 @@ async function askPhone(chatId) {
 }
 
 async function askLocation(chatId) {
-  await sendMessage(chatId, "Iltimos, manzilingizni ulashing: ", {
+  const keyboardText = await getTranslatedKeyboard(chatId);
+  
+  await sendTranslatedMessage(chatId, 'ask_location', {
     reply_markup: {
       keyboard: [
-        [{ text: "Manzilni ulashish 📍", request_location: true }],
+        [{ text: keyboardText.location_share, request_location: true }],
+        [{ text: keyboardText.write_location }]
       ],
       resize_keyboard: true,
       one_time_keyboard: true,
@@ -542,12 +630,14 @@ async function askLocation(chatId) {
 }
 
 async function homeMenu(chatId) {
-  await sendMessage(chatId, "Bosh sahifa:", {
+  const keyboardText = await getTranslatedKeyboard(chatId);
+  
+  await sendTranslatedMessage(chatId, '🏠 home_menu:', {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
-          { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+          { text: keyboardText.my_orders, callback_data: 'my_orders' },
+          { text: keyboardText.change_language, callback_data: 'change_language' }
         ]
       ],
       resize_keyboard: true,
@@ -556,11 +646,13 @@ async function homeMenu(chatId) {
 }
 
 async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
+  const keyboardText = await getTranslatedKeyboard(chatId);
+  
   const reply_markup = {
     inline_keyboard: [
       [
-        { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
-        { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+        { text: keyboardText.my_orders, callback_data: 'my_orders' },
+        { text: keyboardText.change_language, callback_data: 'change_language' }
       ]
     ]
   };
@@ -608,15 +700,24 @@ async function handleUpdate(req, res) {
         return;
 
       } else if (data === "change_language") {
-        await sendMessage(chatId, "🌐 Tilni tanlang:", {
+        // Get current language for debug purposes
+        const currentLanguage = await getUserLanguage(chatId);
+        console.log(`Current language for user ${chatId}: ${currentLanguage}`);
+        
+        // Get translated language selection message
+        const selectLangText = await translate(chatId, 'select_language');
+        const latinText = await translate(chatId, 'Uzbek');
+        const cyrillicText = await translate(chatId, 'Krilcha');
+        
+        await sendMessage(chatId, selectLangText, {
           reply_markup: {
             inline_keyboard: [
               [{
-                text: "🇺🇿 O'zbek (Lotin)",
-                callback_data: "lang_uz_latn"
+                text: `🇺🇿 ${latinText}${currentLanguage === 'uz' ? ' ✓' : ''}`,
+                callback_data: "lang_uz"
               }],
               [{
-                text: "🇺🇿 Ўзбек (Кирилл)",
+                text: `🇺🇿 ${cyrillicText}${currentLanguage === 'uz_cyrl' ? ' ✓' : ''}`, 
                 callback_data: "lang_uz_cyrl"
               }]
             ]
@@ -624,17 +725,47 @@ async function handleUpdate(req, res) {
         });
         res.sendStatus(200);
         return;
-      } else if (data === "lang_uz_latn") {
-        await sendMessage(chatId, "Til muvaffaqiyatli o'zgartirildi!");
+      } else if (data === "lang_uz") {
+        console.log('🔄 Changing language to Uzbek Latin');
+        
+        // Update user's language preference
+        const updateResult = await models.User.update(
+          { language: 'uz' },
+          { where: { chatId } }
+        );
+        console.log('Database update result:', updateResult);
+        
+        // Change i18next language
+        const changeResult = await changeLanguage('uz');
+        console.log('Language change result:', changeResult);
+        
+        // Send language changed confirmation and show home menu
+        await sendTranslatedMessage(chatId, 'language_changed');
+        await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz_cyrl") {
-        await sendMessage(chatId, "Тил муваффақиятли ўзгартирилди!");
+        console.log('🔄 Changing language to Uzbek Cyrillic');
+        
+        // Update user's language preference
+        const updateResult = await models.User.update(
+          { language: 'uz_cyrl' },
+          { where: { chatId } }
+        );
+        console.log('Database update result:', updateResult);
+        
+        // Change i18next language
+        const changeResult = await changeLanguage('uz_cyrl');
+        console.log('Language change result:', changeResult);
+        
+        // Send language changed confirmation and show home menu
+        await sendTranslatedMessage(chatId, 'language_changed');
+        await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "confirm_yes") {
         userStateById.set(chatId, {});
-        await sendHomeMenuWithMessage(chatId, "Ma'lumotlar tasdiqlandi ✅: \n\nBosh sahifa:");
+        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'confirmation') + ": \n\n" + await translate(chatId, 'home_menu'));
         res.sendStatus(200);
         return;
       } else if (data === "order_confirm_yes") {
@@ -650,18 +781,19 @@ async function handleUpdate(req, res) {
             : null;
         const confirmationMessageId = cq.message.message_id;
 
+        const keyboardText = await getTranslatedKeyboard(chatId);
 
         // Edit seller's inline message - ADD BUYURTMALARIM BUTTON
         await telegram.post("/editMessageText", {
           chat_id: chatId,
           message_id: confirmationMessageId,
-          text: "Buyurtma qabul qilindi ✅",
+          text: await translate(chatId, 'order_received'),
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
               [
                 {
-                  text: "Buyurtmalarim 📑",
+                  text: keyboardText.my_orders,
                   callback_data: "my_orders"
                 }
               ]
@@ -822,11 +954,11 @@ async function handleUpdate(req, res) {
             : null;
         const confirmationMessageId = cq.message.message_id;
         
-        // Edit seller's inline message - ADD BUYURTMALARIM BUTTON
+        // Edit seller's inline message
         await telegram.post("/editMessageText", {
           chat_id: chatId,
           message_id: confirmationMessageId,
-          text: "Buyurtma bekor qilindi ❌",
+          text: await translate(chatId, 'order_cancelled'),
           parse_mode: "HTML",
         });
         
@@ -892,10 +1024,7 @@ async function handleUpdate(req, res) {
                 address: nextContext.customerAddress,
               });
 
-              await sendMessage(
-                chatId,
-                "Rahmat! Buyurtma boshqa kuryerga yuborildi 🚚"
-              );
+              await sendTranslatedMessage(chatId, 'order_forwarded');
               reassigned = true;
             } catch (err) {
               console.error(
@@ -919,10 +1048,11 @@ async function handleUpdate(req, res) {
                 "cancelled"
               );
             } catch (e) {
-              await sendMessage(
-                chatId,
-                `Status yangilashda xatolik ❌ (userId=${customerChatId}, orderId=${resolvedOrderNumber}): cancelled`
-              );
+              await sendTranslatedMessage(chatId, 'status_update_error', {}, {
+                userId: customerChatId,
+                orderId: resolvedOrderNumber,
+                status: 'cancelled'
+              });
             }
           } 
 
@@ -931,16 +1061,12 @@ async function handleUpdate(req, res) {
           }
         }
       } else if (data === "confirm_no") {
-        await sendMessage(
-          chatId,
-          "Bekor qilindi. /start bilan qayta boshlang.",
-          {
-            reply_markup: { remove_keyboard: true },
-          }
-        );
+        await sendTranslatedMessage(chatId, 'cancelled', {
+          reply_markup: { remove_keyboard: true },
+        });
       } else if (data.startsWith("back_to_home_menu:")) {
         const messageId = parseInt(data.split(":")[1], 10);
-        await sendHomeMenuWithMessage(chatId, "Bosh menyu ↩️", {
+        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'back_to_home'), {
           message_id: messageId,
         });
         userStateById.delete(chatId);
@@ -1169,7 +1295,7 @@ async function handleUpdate(req, res) {
             const orderIndex = allOrders.findIndex((o) => o.id === orderDbId);
             const orderNumber =
               orderIndex !== -1
-                ? `${orderIndex + 1}. ${plainOrder.productName || "Mahsulot"} ${
+                ? `${orderIndex + 1}. ${plainOrder.productName || await translate(chatId, 'product')} ${
                     plainOrder.liters ? `${plainOrder.liters}L` : ""
                   }`
                 : "";
@@ -1178,7 +1304,8 @@ async function handleUpdate(req, res) {
               status: "completed",
               orderId: externalOrderId,
             };
-            const orderText = formatCourierOrderForMessage(
+            const orderText = await formatCourierOrderForMessage(
+              chatId,
               completedOrder,
               false
             );
@@ -1196,7 +1323,7 @@ async function handleUpdate(req, res) {
 
             await telegram.post("/answerCallbackQuery", {
               callback_query_id: cq.id,
-              text: "Buyurtma yetkazilgan deb belgilandi ✅",
+              text: await translate(chatId, 'order_delivered'),
             });
           }
         } catch (error) {
@@ -1206,7 +1333,7 @@ async function handleUpdate(req, res) {
           );
           await telegram.post("/answerCallbackQuery", {
             callback_query_id: cq.id,
-            text: "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.",
+            text: await translate(chatId, 'error'),
           });
         }
 
@@ -1214,10 +1341,7 @@ async function handleUpdate(req, res) {
         return;
       } else if (data.startsWith("order_not_delivered:")) {
         // Courier reported "No" - keep status and send a reminder
-        await sendMessage(
-          chatId,
-          "Iltimos, buyurtmani tezroq yetkazib bering 📦"
-        );
+        await sendTranslatedMessage(chatId, 'order_not_delivered');
       } else if (data.startsWith("courier_orders_page:")) {
         // Pagination - change page in orders list (edit existing message)
         const page = parseInt(data.split(":")[1], 10) || 1;
@@ -1307,13 +1431,13 @@ async function handleUpdate(req, res) {
         text === "Tilni o'zgartirish" ||
         text === "🌐 Tilni o'zgartirish"
       ) {
-        await sendMessage(chatId, "🌐 Tilni tanlang:", {
+        await sendTranslatedMessage(chatId, 'select_language', {
           reply_markup: {
             inline_keyboard: [
               [
                 {
                   text: "🇺🇿 O'zbek (Lotin)",
-                  callback_data: "lang_uz_latn",
+                  callback_data: "lang_uz",
                 },
               ],
               [
@@ -1332,19 +1456,25 @@ async function handleUpdate(req, res) {
       if (text === "🇺🇿 O'zbek (Lotin)") {
         responseJson = {
         chatId,
-        language: "uz_lat",
-        message: "Til muvaffaqiyatli o'zgartirildi!"
+        language: "uz",
+        message: await translate(chatId, 'language_changed')
         };
         } else if (text === "🇺🇿 Ўзбек (Кирилл)") {
         responseJson = {
         chatId,
-        language: "uz_cyr",
-        message: "Тил муваффақиятли ўзгартирилди!"
+        language: "uz_cyrl",
+        message: await translate(chatId, 'language_changed')
         };
         }
         
         if (responseJson) {
         console.log(responseJson); 
+        // Update user's language preference
+        await models.User.update(
+          { language: responseJson.language },
+          { where: { chatId } }
+        );
+        await changeLanguage(responseJson.language);
         await sendMessage(chatId, responseJson.message, { sendHomeMenuWithMessage });
         res.sendStatus(200);
         return;
@@ -1369,18 +1499,24 @@ async function handleUpdate(req, res) {
           const phone = user?.phone || "—";
           const address = user?.address || "—";
 
-          await sendMessage(
+          await sendTranslatedMessage(
             chatId,
-            `Ma'lumotlaringiz:\nUsername: ${uname}\nFull name: ${fullName}\nTelefon: ${phone}\nManzil: ${address}\n\nMa'lumotlar to'g'rimi?`,
+            'user_info',
             {
               reply_markup: {
                 inline_keyboard: [
                   [
-                    { text: "Ha ✅", callback_data: "confirm_yes" },
-                    { text: "Yo'q ❌", callback_data: "confirm_no" },
+                    { text: await translate(chatId, 'yes'), callback_data: "confirm_yes" },
+                    { text: await translate(chatId, 'no'), callback_data: "confirm_no" },
                   ],
                 ],
               },
+            },
+            {
+              username: uname,
+              fullName: fullName,
+              phone: phone,
+              address: address
             }
           );
           
@@ -1388,7 +1524,7 @@ async function handleUpdate(req, res) {
           userStateById.set(chatId, state);
         } catch (e) {
           console.error("Failed to save text address:", e);
-          await sendMessage(chatId, "Manzilni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+          await sendTranslatedMessage(chatId, 'location_save_error');
         }
         res.sendStatus(200);
         return;
@@ -1441,18 +1577,24 @@ async function handleUpdate(req, res) {
           }
         }
 
-        await sendMessage(
+        await sendTranslatedMessage(
           chatId,
-          `Ma'lumotlaringiz:\nUsername: ${uname}\nFull name: ${fullName}\nTelefon: ${phone}\nManzil: ${address}\n\nMa'lumotlar to'g'rimi?`,
+          'user_info',
           {
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: "Ha ✅", callback_data: "confirm_yes" },
-                  { text: "Yo'q ❌", callback_data: "confirm_no" },
+                  { text: await translate(chatId, 'yes'), callback_data: "confirm_yes" },
+                  { text: await translate(chatId, 'no'), callback_data: "confirm_no" },
                 ],
               ],
             },
+          },
+          {
+            username: uname,
+            fullName: fullName,
+            phone: phone,
+            address: address
           }
         );
         res.sendStatus(200);
@@ -1467,10 +1609,7 @@ async function handleUpdate(req, res) {
         const formattedPhone = formatPhoneNumber(phone);
         
         if (!formattedPhone) {
-          await sendMessage(
-            chatId,
-            "Iltimos, to'g'ri telefon raqam kiriting (masalan: 909993394) yoki 'Raqamni ulashish' tugmasini bosing."
-          );
+          await sendTranslatedMessage(chatId, 'share_phone_correctly');
           res.sendStatus(200);
           return;
         }
@@ -1483,11 +1622,11 @@ async function handleUpdate(req, res) {
             { phone: formattedPhone },
             { where: { chatId } }
           );
-          await sendMessage(chatId, `Rahmat! Raqamingiz qabul qilindi: ${formattedPhone} ✅`);
+          await sendTranslatedMessage(chatId, 'phone_saved', {}, { phone: formattedPhone });
           await askLocation(chatId);
         } catch (e) {
           console.error("Failed to save phone:", e);
-          await sendMessage(chatId, "Telefon raqamingizni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+          await sendTranslatedMessage(chatId, 'phone_save_error');
         }
         res.sendStatus(200);
         return;
@@ -1500,7 +1639,7 @@ async function handleUpdate(req, res) {
         state.expected = "last_name";
         userStateById.set(chatId, state);
         
-        await sendMessage(chatId, "Familiyangizni kiriting:");
+        await sendTranslatedMessage(chatId, 'ask_last_name');
         res.sendStatus(200);
         return;
       }
@@ -1518,11 +1657,11 @@ async function handleUpdate(req, res) {
             { fullName },
             { where: { chatId } }
           );
-          await sendMessage(chatId, `Ism-familiyangiz saqlandi: ${fullName}`);
+          await sendTranslatedMessage(chatId, 'name_saved', {}, { fullName: fullName });
           await askPhone(chatId);
         } catch (e) {
           console.error("Failed to save user name:", e);
-          await sendMessage(chatId, "Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+          await sendTranslatedMessage(chatId, 'name_save_error');
         }
         res.sendStatus(200);
         return;
@@ -1539,27 +1678,28 @@ async function handleUpdate(req, res) {
             { phone },
             { where: { chatId } }
           );
-          await sendMessage(chatId, "Rahmat! Raqamingiz qabul qilindi ✅");
+          await sendTranslatedMessage(chatId, 'phone_saved', {}, { phone: phone });
           await askLocation(chatId);
         } catch (e) {
           console.error("Failed to save phone:", e);
-          await sendMessage(chatId, "Telefon raqamingizni saqlashda xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.");
+          await sendTranslatedMessage(chatId, 'phone_save_error');
         }
         res.sendStatus(200);
         return;
       }
 
       // Handle "Manzilni yozish" button
-      if (text === "Manzilni yozish ✍️") {
+      const keyboardText = await getTranslatedKeyboard(chatId);
+      if (text === keyboardText.write_location) {
         state.expected = "location_text";
         userStateById.set(chatId, state);
-        await sendMessage(chatId, "Iltimos, manzilingizni to'liq matn shaklida yuboring:");
+        await sendTranslatedMessage(chatId, 'ask_location_text');
         res.sendStatus(200);
         return;
       }
 
-      if (text === "Orqaga qaytish ↩️" || text === "Orqaga ↩️") {
-        await sendHomeMenuWithMessage(chatId, "O'zgarishlar yo'q🤷‍♂️");
+      if (text === keyboardText.back) {
+        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'home_changes'));
         userStateById.delete(chatId);
         res.sendStatus(200);
         return;
@@ -1582,21 +1722,23 @@ async function handleUpdate(req, res) {
                                          (existingUser.address || (existingUser.latitude && existingUser.longitude));
       
           if (hasCompletedRegistration) {
-            await sendMessage(
+            await sendTranslatedMessage(
               chatId,
-              `Hisobga kirildi✅:\n\n` +
-                `🆔ID: ${existingUser.telegramId}\n` +
-                `📞Telefon raqamingiz: ${existingUser.phone || "—"}\n` +
-                `👤Ismingiz: ${existingUser.fullName || "—"}`,
+              'login_success',
               {
                 reply_markup: {
                   inline_keyboard: [
                     [
-                      { text: "Buyurtmalarim 📑", callback_data: 'my_orders' },
-                      { text: "Tilni o'zgartirish 🌐", callback_data: 'change_language' }
+                      { text: await translate(chatId, 'my_orders'), callback_data: 'my_orders' },
+                      { text: await translate(chatId, 'change_language'), callback_data: 'change_language' }
                     ]
                   ]
                 },
+              },
+              {
+                telegramId: existingUser.telegramId,
+                phone: existingUser.phone || "—",
+                fullName: existingUser.fullName || "—"
               }
             );
             res.sendStatus(200);
@@ -1613,7 +1755,7 @@ async function handleUpdate(req, res) {
                 expected: "first_name",
                 userData: { telegramId, chatId, username }
               });
-              await sendMessage(chatId, `Ro'yhatdan o'tishni davom ettiramiz. Iltimos, ismingizni kiriting:`);
+              await sendTranslatedMessage(chatId, 'continue_registration');
             } else if (!existingUser.phone) {
               nextStep = "phone";
               userStateById.set(chatId, { 
@@ -1650,38 +1792,26 @@ async function handleUpdate(req, res) {
             });
           }
       
-          await sendMessage(
-            chatId,
-            `Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tish uchun quyidagi ma'lumotlarni kiriting.\n\nIltimos, ismingizni kiriting:`
-          );
+          await sendTranslatedMessage(chatId, 'welcome');
           res.sendStatus(200);
           return;
           
         } catch (e) {
           console.error("Sequelize start handler failed:", e.message || e);
-          await sendMessage(
-            chatId,
-            "Xatolik yuz berdi. Keyinroq urinib ko'ring."
-          );
+          await sendTranslatedMessage(chatId, 'start_error');
           res.sendStatus(200);
           return;
         }
       }
 
       if (text === "/help") {
-        await sendMessage(
-          chatId,
-          "Mavjud buyruqlar:\n/start - Boshlash va ro'yhatdan o'tish\n/help - Yordam"
-        );
+        await sendTranslatedMessage(chatId, 'help');
         res.sendStatus(200);
         return;
       }
 
       if (text) {
-        await sendMessage(
-          chatId,
-          "Buyruq tushunilmadi. /start yoki /help ni ishlating."
-        );
+        await sendTranslatedMessage(chatId, 'unknown_command');
         res.sendStatus(200);
         return;
       }
