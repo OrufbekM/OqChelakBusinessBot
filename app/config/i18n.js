@@ -31,9 +31,11 @@ const initializeI18n = async () => {
       // Check if locale files exist
       const uzPath = path.join(localesPath, 'uz.json');
       const uzCyrlPath = path.join(localesPath, 'uz_cyrl.json');
+      const ruPath = path.join(localesPath, 'ru.json');
       
       console.log('UZ file exists:', fs.existsSync(uzPath));
       console.log('UZ Cyrl file exists:', fs.existsSync(uzCyrlPath));
+      console.log('RU file exists:', fs.existsSync(ruPath));
       
       if (!fs.existsSync(uzPath)) {
         throw new Error(`❌ UZ locale file not found: ${uzPath}`);
@@ -43,12 +45,16 @@ const initializeI18n = async () => {
         console.warn(`⚠️ UZ Cyrl locale file not found: ${uzCyrlPath}, falling back to UZ`);
       }
 
+      if (!fs.existsSync(ruPath)) {
+        console.warn(`⚠️ RU locale file not found: ${ruPath}, falling back to UZ`);
+      }
+
       await i18next
         .use(Backend)
         .init({
           lng: 'uz',
           fallbackLng: 'uz',
-          preload: ['uz', 'uz_cyrl'],
+          preload: ['uz', 'uz_cyrl', 'ru'], // Rus tilini qo'shing
           ns: ['translation'],
           defaultNS: 'translation',
           backend: {
@@ -60,7 +66,7 @@ const initializeI18n = async () => {
           returnObjects: true,
           returnEmptyString: false,
           returnNull: false,
-          debug: true // Enable debug mode
+          debug: true
         });
     
       console.log('✅ i18next initialized successfully');
@@ -76,7 +82,6 @@ const initializeI18n = async () => {
       return i18next;
     } catch (error) {
       console.error('❌ Failed to initialize i18n:', error);
-      // Re-throw to allow handling in the application
       throw error;
     }
   })();
@@ -100,7 +105,7 @@ async function t(key, options = {}) {
     return result;
   } catch (error) {
     console.error(`❌ Error in translation for key "${key}":`, error);
-    return key; // Return the key as fallback
+    return key;
   }
 }
 

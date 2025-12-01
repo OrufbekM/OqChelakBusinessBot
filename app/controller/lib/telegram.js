@@ -754,6 +754,7 @@ async function handleUpdate(req, res) {
         const selectLangText = await translate(chatId, 'select_language');
         const latinText = await translate(chatId, 'Uzbek');
         const cyrillicText = await translate(chatId, 'Krilcha');
+        const russianText = await translate(chatId, 'Russian'); // Rus tilini qo'shing
         
         await sendMessage(chatId, selectLangText, {
           reply_markup: {
@@ -765,10 +766,71 @@ async function handleUpdate(req, res) {
               [{
                 text: ` ${cyrillicText}${currentLanguage === 'uz_cyrl' ? ' ' : ''}`, 
                 callback_data: "lang_uz_cyrl"
+              }],
+              [{
+                text: ` ${russianText}${currentLanguage === 'ru' ? ' ' : ''}`, 
+                callback_data: "lang_ru"
               }]
             ]
           }
         });
+        res.sendStatus(200);
+        return;
+      } else if (data === "lang_uz") {
+        console.log(' Changing language to Uzbek Latin');
+        
+        // Update user's language preference
+        const updateResult = await models.User.update(
+          { language: 'uz' },
+          { where: { chatId } }
+        );
+        console.log('Database update result:', updateResult);
+        
+        // Change i18next language
+        const changeResult = await changeLanguage('uz');
+        console.log('Language change result:', changeResult);
+        
+        // Send language changed confirmation and show home menu
+        await sendTranslatedMessage(chatId, 'language_changed');
+        await homeMenu(chatId);
+        res.sendStatus(200);
+        return;
+      } else if (data === "lang_uz_cyrl") {
+        console.log(' Changing language to Uzbek Cyrillic');
+        
+        // Update user's language preference
+        const updateResult = await models.User.update(
+          { language: 'uz_cyrl' },
+          { where: { chatId } }
+        );
+        console.log('Database update result:', updateResult);
+        
+        // Change i18next language
+        const changeResult = await changeLanguage('uz_cyrl');
+        console.log('Language change result:', changeResult);
+        
+        // Send language changed confirmation and show home menu
+        await sendTranslatedMessage(chatId, 'language_changed');
+        await homeMenu(chatId);
+        res.sendStatus(200);
+        return;
+      } else if (data === "lang_ru") { // Rus tili uchun yangi qism
+        console.log(' Changing language to Russian');
+        
+        // Update user's language preference
+        const updateResult = await models.User.update(
+          { language: 'ru' },
+          { where: { chatId } }
+        );
+        console.log('Database update result:', updateResult);
+        
+        // Change i18next language
+        const changeResult = await changeLanguage('ru');
+        console.log('Language change result:', changeResult);
+        
+        // Send language changed confirmation and show home menu
+        await sendTranslatedMessage(chatId, 'language_changed');
+        await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz") {
