@@ -72,7 +72,6 @@ async function getTranslatedKeyboard(chatId) {
     return {
       phone_share: await translate(chatId, 'phone_share'),
       location_share: await translate(chatId, 'location_share'),
-      write_location: await translate(chatId, 'write_location'),
       back: await translate(chatId, 'back'),
       yes: await translate(chatId, 'yes'),
       no: await translate(chatId, 'no'),
@@ -85,16 +84,15 @@ async function getTranslatedKeyboard(chatId) {
     console.error('Error getting translated keyboard:', error);
     // Fallback to Uzbek Latin if there's an error
     return {
-      phone_share: "Raqamni ulashish 📱",
-      location_share: "Manzilni ulashish 📍",
-      write_location: "Manzilni yozish ✍️",
-      back: "Orqaga ↩️",
-      yes: "Ha ✅",
-      no: "Yo'q ❌",
-      delivered: "Yetkazildi ✅",
-      not_delivered: "Yetkazilmadi ❌",
-      my_orders: "Buyurtmalarim 📑",
-      change_language: "Tilni o'zgartirish 🌐"
+      phone_share: "Raqamni ulashish ",
+      location_share: "Manzilni ulashish ",
+      back: "Orqaga ",
+      yes: "Ha ",
+      no: "Yo'q ",
+      delivered: "Yetkazildi ",
+      not_delivered: "Yetkazilmadi ",
+      my_orders: "Buyurtmalarim ",
+      change_language: "Tilni o'zgartirish "
     };
   }
 }
@@ -316,13 +314,13 @@ async function formatCourierOrderForMessage(chatId, order, showQuestion = true) 
   const locationText = await translate(chatId, 'location');
   const viewOnMap = await translate(chatId, 'view_on_map');
   
-  const orderNameLine = `📦 ${orderName}: ${productName}`;
-  const litersLine = `🥛 ${litersText}: ${liters}`;
-  const addressLine = `📍 ${addressText}: ${address}`;
-  const phoneLine = `📞 ${phoneText}: ${phone}`;
-  const customerLine = `👤 ${customerText}: ${customerName}`;
+  const orderNameLine = ` ${orderName}: ${productName}`;
+  const litersLine = ` ${litersText}: ${liters}`;
+  const addressLine = ` ${addressText}: ${address}`;
+  const phoneLine = ` ${phoneText}: ${phone}`;
+  const customerLine = ` ${customerText}: ${customerName}`;
   
-  let locationLine = `🗺️ ${locationText}: —`;
+  let locationLine = ` ${locationText}: —`;
   const mapsUrl =
     order.mapsUrl ||
     (order.latitude && order.longitude
@@ -330,7 +328,7 @@ async function formatCourierOrderForMessage(chatId, order, showQuestion = true) 
       : null);
       
   if (mapsUrl) {
-    locationLine = `🗺️ ${locationText}: <a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
+    locationLine = ` ${locationText}: <a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
   }
 
   const parts = [
@@ -620,8 +618,7 @@ async function askLocation(chatId) {
   await sendTranslatedMessage(chatId, 'ask_location', {
     reply_markup: {
       keyboard: [
-        [{ text: keyboardText.location_share, request_location: true }],
-        [{ text: keyboardText.write_location }]
+        [{ text: keyboardText.location_share, request_location: true }]
       ],
       resize_keyboard: true,
       one_time_keyboard: true,
@@ -712,11 +709,11 @@ async function handleUpdate(req, res) {
           reply_markup: {
             inline_keyboard: [
               [{
-                text: `🇺🇿 ${latinText}${currentLanguage === 'uz' ? ' ✓' : ''}`,
+                text: ` ${latinText}${currentLanguage === 'uz' ? ' ' : ''}`,
                 callback_data: "lang_uz"
               }],
               [{
-                text: `🇺🇿 ${cyrillicText}${currentLanguage === 'uz_cyrl' ? ' ✓' : ''}`, 
+                text: ` ${cyrillicText}${currentLanguage === 'uz_cyrl' ? ' ' : ''}`, 
                 callback_data: "lang_uz_cyrl"
               }]
             ]
@@ -725,7 +722,7 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz") {
-        console.log('🔄 Changing language to Uzbek Latin');
+        console.log(' Changing language to Uzbek Latin');
         
         // Update user's language preference
         const updateResult = await models.User.update(
@@ -744,7 +741,7 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz_cyrl") {
-        console.log('🔄 Changing language to Uzbek Cyrillic');
+        console.log(' Changing language to Uzbek Cyrillic');
         
         // Update user's language preference
         const updateResult = await models.User.update(
@@ -763,6 +760,16 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
       } else if (data === "confirm_yes") {
+        // Delete the confirmation message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete confirmation message:", e.message || e);
+        }
+
         userStateById.set(chatId, {});
         await sendHomeMenuWithMessage(chatId, await translate(chatId, 'confirmation') + ": \n\n" + await translate(chatId, 'home_menu'));
         res.sendStatus(200);
@@ -782,11 +789,18 @@ async function handleUpdate(req, res) {
 
         const keyboardText = await getTranslatedKeyboard(chatId);
 
-        // Edit seller's inline message - ADD BUYURTMALARIM BUTTON
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: confirmationMessageId,
-          text: await translate(chatId, 'order_received'),
+        // Delete the order confirmation message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: confirmationMessageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete order confirmation message:", e.message || e);
+        }
+
+        // Send new message instead of editing
+        await sendMessage(chatId, await translate(chatId, 'order_received'), {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
@@ -794,7 +808,6 @@ async function handleUpdate(req, res) {
               [{ text: keyboardText.change_language, callback_data: 'change_language' }]
             ],
             resize_keyboard: false,
-      
           },
         });
 
@@ -806,11 +819,11 @@ async function handleUpdate(req, res) {
         let longitude = null;
 
         // Parse product name and liters from message
-        const productMatch = messageText.match(/📦 Mahsulot: (.+)/);
+        const productMatch = messageText.match(/ Mahsulot: (.+)/);
         if (productMatch) {
           productName = productMatch[1].trim();
         }
-        const qtyMatch = messageText.match(/📏 Miqdor: ([\d.]+)L/);
+        const qtyMatch = messageText.match(/ Miqdor: ([\d.]+)L/);
         if (qtyMatch) {
           liters = parseFloat(qtyMatch[1]);
         }
@@ -951,11 +964,18 @@ async function handleUpdate(req, res) {
             : null;
         const confirmationMessageId = cq.message.message_id;
         
-        // Edit seller's inline message
-        await telegram.post("/editMessageText", {
-          chat_id: chatId,
-          message_id: confirmationMessageId,
-          text: await translate(chatId, 'order_cancelled'),
+        // Delete the order confirmation message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: confirmationMessageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete order confirmation message:", e.message || e);
+        }
+        
+        // Send new message instead of editing
+        await sendMessage(chatId, await translate(chatId, 'order_cancelled'), {
           parse_mode: "HTML",
         });
         
@@ -1058,6 +1078,16 @@ async function handleUpdate(req, res) {
           }
         }
       } else if (data === "confirm_no") {
+        // Delete the confirmation message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete confirmation message:", e.message || e);
+        }
+
         await sendTranslatedMessage(chatId, 'cancelled', {
           reply_markup: { remove_keyboard: true },
         });
@@ -1193,7 +1223,7 @@ async function handleUpdate(req, res) {
                   }
                 );
                 console.log(
-                  "✅ Order status update API response:",
+                  " Order status update API response:",
                   JSON.stringify(statusResponse.data, null, 2)
                 );
 
@@ -1203,17 +1233,17 @@ async function handleUpdate(req, res) {
                   statusResponse.data.status === "completed"
                 ) {
                   console.log(
-                    "✅ SUCCESS: Order status changed to completed in API"
+                    " SUCCESS: Order status changed to completed in API"
                   );
                 } else {
                   console.log(
-                    "❌ API response doesn't show completed status:",
+                    " API response doesn't show completed status:",
                     statusResponse.data
                   );
                 }
               } catch (e) {
                 console.error(
-                  "❌ Failed to update order status in external API:",
+                  " Failed to update order status in external API:",
                   e.message || e
                 );
                 if (e.response) {
@@ -1224,7 +1254,7 @@ async function handleUpdate(req, res) {
               }
             } else {
               console.warn(
-                "❌ Cannot update order status - missing externalUserId or numericExternalOrderId:",
+                " Cannot update order status - missing externalUserId or numericExternalOrderId:",
                 {
                   externalUserId: externalUserId,
                   numericExternalOrderId: numericExternalOrderId,
@@ -1257,12 +1287,12 @@ async function handleUpdate(req, res) {
                   }
                 );
                 console.log(
-                  "✅ Seller info sent successfully:",
+                  " Seller info sent successfully:",
                   sellerResponse.data
                 );
               } catch (apiError) {
                 console.error(
-                  "❌ Failed to send seller info to API:",
+                  " Failed to send seller info to API:",
                   apiError.message || apiError
                 );
                 if (apiError.response) {
@@ -1274,7 +1304,7 @@ async function handleUpdate(req, res) {
               }
             } else {
               console.warn(
-                "❌ Cannot send seller info - missing orderId or phone:",
+                " Cannot send seller info - missing orderId or phone:",
                 {
                   orderId: numericExternalOrderId,
                   sellerPhone: sellerPhone,
@@ -1393,10 +1423,6 @@ async function handleUpdate(req, res) {
         }
       }
 
-      await telegram.post("/answerCallbackQuery", {
-        callback_query_id: cq.id,
-      });
-
       res.sendStatus(200);
       return;
     }
@@ -1409,9 +1435,9 @@ async function handleUpdate(req, res) {
       // Keep the old text commands for backward compatibility
       if (
         text === "/orders" ||
-        text === "Buyurtmalarim 📑" ||
+        text === "Buyurtmalarim " ||
         text === "Buyurtmalarim" ||
-        text === "Buyurtmalarim🗒️"
+        text === "Buyurtmalarim"
       ) {
         const state = userStateById.get(chatId) || {};
         await sendCourierOrdersList(
@@ -1424,22 +1450,22 @@ async function handleUpdate(req, res) {
       }
       if (
         text === "/language" ||
-        text === "Tilni o'zgartirish 🌐" ||
+        text === "Tilni o'zgartirish " ||
         text === "Tilni o'zgartirish" ||
-        text === "🌐 Tilni o'zgartirish"
+        text === " Tilni o'zgartirish"
       ) {
         await sendTranslatedMessage(chatId, 'select_language', {
           reply_markup: {
             inline_keyboard: [
               [
                 {
-                  text: "🇺🇿 O'zbek (Lotin)",
+                  text: " O'zbek (Lotin)",
                   callback_data: "lang_uz",
                 },
               ],
               [
                 {
-                  text: "🇺🇿 Ўзбек (Кирилл)",
+                  text: " Ўзбек (Кирилл)",
                   callback_data: "lang_uz_cyrl",
                 },
               ],
@@ -1450,13 +1476,13 @@ async function handleUpdate(req, res) {
 
       let responseJson = null
 
-      if (text === "🇺🇿 O'zbek (Lotin)") {
+      if (text === " O'zbek (Lotin)") {
         responseJson = {
         chatId,
         language: "uz",
         message: await translate(chatId, 'language_changed')
         };
-        } else if (text === "🇺🇿 Ўзбек (Кирилл)") {
+        } else if (text === " Ўзбек (Кирилл)") {
         responseJson = {
         chatId,
         language: "uz_cyrl",
@@ -1685,22 +1711,6 @@ async function handleUpdate(req, res) {
         return;
       }
 
-      // Handle "Manzilni yozish" button
-      const keyboardText = await getTranslatedKeyboard(chatId);
-      if (text === keyboardText.write_location) {
-        state.expected = "location_text";
-        userStateById.set(chatId, state);
-        await sendTranslatedMessage(chatId, 'ask_location_text');
-        res.sendStatus(200);
-        return;
-      }
-
-      if (text === keyboardText.back) {
-        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'home_changes'));
-        userStateById.delete(chatId);
-        res.sendStatus(200);
-        return;
-      }
 
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
