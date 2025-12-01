@@ -362,13 +362,50 @@ async function getCourierOrdersByChatId(chatId, limit = null) {
   return models.CourierOrder.findAll(options);
 }
 
-// Send each order as a separate message without pagination
+// Delete previous order messages before sending new ones
+async function deletePreviousOrderMessages(chatId) {
+  try {
+    const state = userStateById.get(chatId) || {};
+    const previousMessages = state.orderMessages || [];
+    
+    for (const msgId of previousMessages) {
+      try {
+        await telegram.post("/deleteMessage", {
+          chat_id: chatId,
+          message_id: msgId,
+        });
+      } catch (e) {
+        // Message might already be deleted
+        console.log("Message already deleted:", e.message || e);
+      }
+    }
+    
+    // Clear the message IDs from state
+    state.orderMessages = [];
+    userStateById.set(chatId, state);
+    
+    return true;
+  } catch (error) {
+    console.error("Error deleting previous order messages:", error);
+    return false;
+  }
+}
+
+// Send each order as a separate message
 async function sendCourierOrdersList(chatId) {
   try {
+    // Delete previous order messages first
+    await deletePreviousOrderMessages(chatId);
+    
     const allOrders = await getCourierOrdersByChatId(chatId);
 
     if (!allOrders || allOrders.length === 0) {
-      await sendTranslatedMessage(chatId, 'no_orders');
+      const msgId = await sendTranslatedMessage(chatId, 'no_orders');
+      if (msgId) {
+        const state = userStateById.get(chatId) || {};
+        state.orderMessages = [msgId];
+        userStateById.set(chatId, state);
+      }
       return;
     }
 
@@ -386,6 +423,10 @@ async function sendCourierOrdersList(chatId) {
     }
 
     const keyboardText = await getTranslatedKeyboard(chatId);
+    
+    // Get state for storing message IDs
+    const state = userStateById.get(chatId) || {};
+    state.orderMessages = [];
 
     // Send each order as a separate message
     for (const order of uniqueOrders) {
@@ -407,10 +448,17 @@ async function sendCourierOrdersList(chatId) {
         ]);
       }
 
-      await sendMessage(chatId, orderText, {
+      const msgId = await sendMessage(chatId, orderText, {
         reply_markup: { inline_keyboard }
       });
+      
+      if (msgId) {
+        state.orderMessages.push(msgId);
+      }
     }
+    
+    // Update state with new message IDs
+    userStateById.set(chatId, state);
 
   } catch (e) {
     console.error("sendCourierOrdersList failed:", e.message || e);
@@ -691,6 +739,8 @@ async function handleUpdate(req, res) {
       });
 
       if (data === "my_orders") {
+        // Delete previous order messages before sending new ones
+        await deletePreviousOrderMessages(chatId);
         await sendCourierOrdersList(chatId);
         res.sendStatus(200);
         return;
@@ -1317,36 +1367,22 @@ async function handleUpdate(req, res) {
               clearOrderAssignment(String(externalOrderId));
             }
 
-            // Update the message
-            const allOrders = await getCourierOrdersByChatId(chatId);
-            const orderIndex = allOrders.findIndex((o) => o.id === orderDbId);
-            const orderNumber =
-              orderIndex !== -1
-                ? `${orderIndex + 1}. ${plainOrder.productName || await translate(chatId, 'product')} ${
-                    plainOrder.liters ? `${plainOrder.liters}L` : ""
-                  }`
-                : "";
-            const completedOrder = {
-              ...plainOrder,
-              status: "completed",
-              orderId: externalOrderId,
-            };
-            const orderText = await formatCourierOrderForMessage(
-              chatId,
-              completedOrder,
-              false
-            );
-            const fullText = orderNumber
-              ? `${orderNumber}\n\n${orderText}`
-              : orderText;
+            // Delete the current message
+            try {
+              await telegram.post("/deleteMessage", {
+                chat_id: chatId,
+                message_id: messageId,
+              });
+            } catch (e) {
+              console.log("Could not delete message:", e.message || e);
+            }
 
-            await telegram.post("/editMessageText", {
-              chat_id: chatId,
-              message_id: messageId,
-              text: fullText,
-              parse_mode: "HTML",
-              
-            });
+            // Remove this message ID from state
+            const state = userStateById.get(chatId) || {};
+            if (state.orderMessages) {
+              state.orderMessages = state.orderMessages.filter(id => id !== messageId);
+              userStateById.set(chatId, state);
+            }
 
             await telegram.post("/answerCallbackQuery", {
               callback_query_id: cq.id,
@@ -1368,6 +1404,25 @@ async function handleUpdate(req, res) {
         return;
       } else if (data.startsWith("order_not_delivered:")) {
         // Courier reported "No" - keep status and send a reminder
+        const messageId = cq.message.message_id;
+        
+        // Delete the current message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {
+          console.log("Could not delete message:", e.message || e);
+        }
+
+        // Remove this message ID from state
+        const state = userStateById.get(chatId) || {};
+        if (state.orderMessages) {
+          state.orderMessages = state.orderMessages.filter(id => id !== messageId);
+          userStateById.set(chatId, state);
+        }
+
         await sendTranslatedMessage(chatId, 'order_not_delivered');
       } else if (data.startsWith("courier_orders_page:")) {
         // Pagination - change page in orders list (edit existing message)
@@ -1439,12 +1494,9 @@ async function handleUpdate(req, res) {
         text === "Buyurtmalarim" ||
         text === "Buyurtmalarim"
       ) {
-        const state = userStateById.get(chatId) || {};
-        await sendCourierOrdersList(
-          chatId,
-          1,
-          state.ordersListMessageId || null
-        );
+        // Delete previous order messages before sending new ones
+        await deletePreviousOrderMessages(chatId);
+        await sendCourierOrdersList(chatId);
         res.sendStatus(200);
         return;
       }
@@ -1729,6 +1781,7 @@ async function handleUpdate(req, res) {
                                          (existingUser.address || (existingUser.latitude && existingUser.longitude));
       
           if (hasCompletedRegistration) {
+            const keyboardText = await getTranslatedKeyboard(chatId);
             await sendTranslatedMessage(
               chatId,
               'login_success',
@@ -1836,4 +1889,5 @@ module.exports = {
   handleUpdate,
   sendMessage,
   notifySellerAboutOrder,
+  deletePreviousOrderMessages
 };
