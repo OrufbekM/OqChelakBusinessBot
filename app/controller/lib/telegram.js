@@ -632,15 +632,14 @@ async function askLocation(chatId) {
 async function homeMenu(chatId) {
   const keyboardText = await getTranslatedKeyboard(chatId);
   
-  await sendTranslatedMessage(chatId, '🏠 home_menu:', {
+  await sendTranslatedMessage(chatId, 'home_menu', {
     reply_markup: {
       inline_keyboard: [
-        [
-          { text: keyboardText.my_orders, callback_data: 'my_orders' },
-          { text: keyboardText.change_language, callback_data: 'change_language' }
-        ]
+        [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
+        [{ text: keyboardText.change_language, callback_data: 'change_language' }]
       ],
-      resize_keyboard: true,
+      resize_keyboard: false,
+
     },
   });
 }
@@ -650,11 +649,11 @@ async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   
   const reply_markup = {
     inline_keyboard: [
-      [
-        { text: keyboardText.my_orders, callback_data: 'my_orders' },
-        { text: keyboardText.change_language, callback_data: 'change_language' }
-      ]
-    ]
+      [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
+      [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+    ],
+    resize_keyboard: false,
+
   };
 
   if (extra.message_id) {
@@ -791,13 +790,11 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [
-                {
-                  text: keyboardText.my_orders,
-                  callback_data: "my_orders"
-                }
-              ]
-            ]
+              [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
+              [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+            ],
+            resize_keyboard: false,
+      
           },
         });
 
@@ -1728,11 +1725,11 @@ async function handleUpdate(req, res) {
               {
                 reply_markup: {
                   inline_keyboard: [
-                    [
-                      { text: await translate(chatId, 'my_orders'), callback_data: 'my_orders' },
-                      { text: await translate(chatId, 'change_language'), callback_data: 'change_language' }
-                    ]
-                  ]
+                    [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
+                    [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+                  ],
+                  resize_keyboard: false,
+            
                 },
               },
               {

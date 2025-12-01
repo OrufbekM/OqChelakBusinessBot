@@ -17,7 +17,7 @@ db.CourierOrder = require("./courierOrder.model")(sequelize, Sequelize);
 
 async function initModels() {
   await sequelize.authenticate();
-  await sequelize.sync({ alter: true });
+  await sequelize.sync({ force: true });
 }
 
 db.initModels = initModels;

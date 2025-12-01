@@ -1,5 +1,5 @@
 {
-  "welcome": "Oq Chelack Business ga hush kelibsiz! Ro'yhatdan o'tish uchun quyidagi ma'lumotlarni kiriting.",
+  "welcome": "Oq Chelack Business ga hush kelibsiz!\nRo'yhatdan o'tish uchun ismingizni kiriting",
   "ask_name": "Iltimos, ismingizni kiriting:",
   "ask_last_name": "Familiyangizni kiriting:",
   "name_saved": "Ism-familiyangiz saqlandi: {{fullName}}",
