@@ -398,8 +398,12 @@ async function sendCourierOrdersList(chatId) {
     await deletePreviousOrderMessages(chatId);
     
     const allOrders = await getCourierOrdersByChatId(chatId);
+    // Exclude cancelled orders from the visible list
+    const visibleOrders = (allOrders || []).filter(
+      (o) => (o.status || "").toLowerCase() !== "cancelled"
+    );
 
-    if (!allOrders || allOrders.length === 0) {
+    if (!visibleOrders || visibleOrders.length === 0) {
       const msgId = await sendTranslatedMessage(chatId, 'no_orders');
       if (msgId) {
         const state = userStateById.get(chatId) || {};
@@ -411,7 +415,7 @@ async function sendCourierOrdersList(chatId) {
 
     const seenKeys = new Set();
     const uniqueOrders = [];
-    for (const order of allOrders) {
+    for (const order of visibleOrders) {
       const key = getCourierOrderUniqueKey(order);
       if (key && seenKeys.has(key)) {
         continue;
@@ -779,18 +783,15 @@ async function handleUpdate(req, res) {
       } else if (data === "lang_uz") {
         console.log(' Changing language to Uzbek Latin');
         
-        // Update user's language preference
         const updateResult = await models.User.update(
           { language: 'uz' },
           { where: { chatId } }
         );
         console.log('Database update result:', updateResult);
         
-        // Change i18next language
         const changeResult = await changeLanguage('uz');
         console.log('Language change result:', changeResult);
         
-        // Send language changed confirmation and show home menu
         await sendTranslatedMessage(chatId, 'language_changed');
         await homeMenu(chatId);
         res.sendStatus(200);
@@ -798,7 +799,6 @@ async function handleUpdate(req, res) {
       } else if (data === "lang_uz_cyrl") {
         console.log(' Changing language to Uzbek Cyrillic');
         
-        // Update user's language preference
         const updateResult = await models.User.update(
           { language: 'uz_cyrl' },
           { where: { chatId } }
@@ -917,7 +917,6 @@ async function handleUpdate(req, res) {
           reply_markup: {
             inline_keyboard: [
               [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-              [{ text: keyboardText.change_language, callback_data: 'change_language' }]
             ],
             resize_keyboard: false,
           },
@@ -1153,7 +1152,6 @@ async function handleUpdate(req, res) {
                 address: nextContext.customerAddress,
               });
 
-              await sendTranslatedMessage(chatId, 'order_forwarded');
               reassigned = true;
             } catch (err) {
               console.error(
