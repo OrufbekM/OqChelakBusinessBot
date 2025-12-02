@@ -758,7 +758,7 @@ async function handleUpdate(req, res) {
         const selectLangText = await translate(chatId, 'select_language');
         const latinText = await translate(chatId, 'Uzbek');
         const cyrillicText = await translate(chatId, 'Krilcha');
-        const russianText = await translate(chatId, 'Russian'); // Rus tilini qo'shing
+        const russianText = await translate(chatId, 'Ruscha'); // Rus tilini qo'shing
         
         await sendMessage(chatId, selectLangText, {
           reply_markup: {
@@ -1166,7 +1166,7 @@ async function handleUpdate(req, res) {
             clearOrderAssignment(normalizedOrderId);
           }
         }
-      } else if (data === "confirm_no") {
+      } else if (data === "confirm_yes") {
         // Delete the confirmation message
         try {
           await telegram.post("/deleteMessage", {
@@ -1177,9 +1177,28 @@ async function handleUpdate(req, res) {
           console.error("Failed to delete confirmation message:", e.message || e);
         }
 
-        await sendTranslatedMessage(chatId, 'cancelled', {
-          reply_markup: { remove_keyboard: true },
-        });
+        userStateById.set(chatId, {});
+        // Registration completed -> notify and show home menu
+        await sendTranslatedMessage(chatId, 'registration_complete');
+        await homeMenu(chatId);
+        res.sendStatus(200);
+        return;
+      } else if (data === "confirm_no") {
+        // Delete the confirmation message
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {
+          console.error("Failed to delete confirmation message:", e.message || e);
+        }
+        // Restart registration from the beginning (ask first name again)
+        const state = userStateById.get(chatId) || {};
+        state.expected = "first_name";
+        userStateById.set(chatId, state);
+        await sendTranslatedMessage(chatId, 'ask_first_name_again');
+        
       } else if (data.startsWith("back_to_home_menu:")) {
         const messageId = parseInt(data.split(":")[1], 10);
         await sendHomeMenuWithMessage(chatId, await translate(chatId, 'back_to_home'), {
