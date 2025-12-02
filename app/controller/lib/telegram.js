@@ -792,6 +792,13 @@ async function handleUpdate(req, res) {
         const changeResult = await changeLanguage('uz');
         console.log('Language change result:', changeResult);
         
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {}
+
         await sendTranslatedMessage(chatId, 'language_changed');
         await homeMenu(chatId);
         res.sendStatus(200);
@@ -808,6 +815,13 @@ async function handleUpdate(req, res) {
         const changeResult = await changeLanguage('uz_cyrl');
         console.log('Language change result:', changeResult);
         
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {}
+
         await sendTranslatedMessage(chatId, 'language_changed');
         await homeMenu(chatId);
         res.sendStatus(200);
@@ -826,6 +840,13 @@ async function handleUpdate(req, res) {
         const changeResult = await changeLanguage('ru');
         console.log('Language change result:', changeResult);
         
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (e) {}
+
         // Send language changed confirmation and show home menu
         await sendTranslatedMessage(chatId, 'language_changed');
         await homeMenu(chatId);
