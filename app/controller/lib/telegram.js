@@ -805,11 +805,9 @@ async function handleUpdate(req, res) {
         );
         console.log('Database update result:', updateResult);
         
-        // Change i18next language
         const changeResult = await changeLanguage('uz_cyrl');
         console.log('Language change result:', changeResult);
         
-        // Send language changed confirmation and show home menu
         await sendTranslatedMessage(chatId, 'language_changed');
         await homeMenu(chatId);
         res.sendStatus(200);
@@ -833,57 +831,38 @@ async function handleUpdate(req, res) {
         await homeMenu(chatId);
         res.sendStatus(200);
         return;
-      } else if (data === "lang_uz") {
-        console.log(' Changing language to Uzbek Latin');
-        
-        // Update user's language preference
-        const updateResult = await models.User.update(
-          { language: 'uz' },
-          { where: { chatId } }
-        );
-        console.log('Database update result:', updateResult);
-        
-        // Change i18next language
-        const changeResult = await changeLanguage('uz');
-        console.log('Language change result:', changeResult);
-        
-        // Send language changed confirmation and show home menu
-        await sendTranslatedMessage(chatId, 'language_changed');
-        await homeMenu(chatId);
-        res.sendStatus(200);
-        return;
-      } else if (data === "lang_uz_cyrl") {
-        console.log(' Changing language to Uzbek Cyrillic');
-        
-        // Update user's language preference
-        const updateResult = await models.User.update(
-          { language: 'uz_cyrl' },
-          { where: { chatId } }
-        );
-        console.log('Database update result:', updateResult);
-        
-        // Change i18next language
-        const changeResult = await changeLanguage('uz_cyrl');
-        console.log('Language change result:', changeResult);
-        
-        // Send language changed confirmation and show home menu
-        await sendTranslatedMessage(chatId, 'language_changed');
-        await homeMenu(chatId);
-        res.sendStatus(200);
-        return;
-      } else if (data === "confirm_yes") {
-        // Delete the confirmation message
+      } else if (data === "name_confirm_yes" || data === "name_confirm_no") {
+        const state = userStateById.get(chatId) || {};
+        // Delete the confirmation message if possible
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
             message_id: messageId,
           });
-        } catch (e) {
-          console.error("Failed to delete confirmation message:", e.message || e);
-        }
+        } catch (e) {}
 
-        userStateById.set(chatId, {});
-        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'confirmation') + ": \n\n" + await translate(chatId, 'home_menu'));
+        if (data === "name_confirm_yes") {
+          if (state.expected === "name_confirm" && state.userData?.firstName && state.userData?.lastName) {
+            const fullName = `${state.userData.firstName} ${state.userData.lastName}`.trim();
+            try {
+              await models.User.update(
+                { fullName },
+                { where: { chatId } }
+              );
+              await sendTranslatedMessage(chatId, 'name_saved', {}, { fullName });
+            } catch (e) {
+              await sendTranslatedMessage(chatId, 'name_save_error');
+            }
+            state.expected = "phone";
+            userStateById.set(chatId, state);
+            await askPhone(chatId);
+          }
+        } else {
+          // Ask for first name again
+          state.expected = "first_name";
+          userStateById.set(chatId, state);
+          await sendTranslatedMessage(chatId, 'ask_first_name_again');
+        }
         res.sendStatus(200);
         return;
       } else if (data === "order_confirm_yes") {
@@ -1769,8 +1748,15 @@ async function handleUpdate(req, res) {
 
       // Handle first name input
       if (state.expected === "first_name" && text) {
+        const firstName = text.trim();
+        // Disallow commands like /start being captured as name
+        if (firstName.startsWith('/')) {
+          await sendTranslatedMessage(chatId, 'enter_valid_first_name');
+          res.sendStatus(200);
+          return;
+        }
         state.userData = state.userData || {};
-        state.userData.firstName = text.trim();
+        state.userData.firstName = firstName;
         state.expected = "last_name";
         userStateById.set(chatId, state);
         
@@ -1781,11 +1767,38 @@ async function handleUpdate(req, res) {
 
       // Handle last name input
       if (state.expected === "last_name" && text) {
-        state.userData.lastName = text.trim();
-        state.expected = "phone";
+        const lastName = text.trim();
+        // Disallow commands like /start being captured as surname
+        if (lastName.startsWith('/')) {
+          await sendTranslatedMessage(chatId, 'enter_valid_last_name');
+          res.sendStatus(200);
+          return;
+        }
+        state.userData.lastName = lastName;
+        state.expected = "name_confirm";
         userStateById.set(chatId, state);
         
-        // Update user with full name
+        // Ask for confirmation before saving
+        const keyboardText = await getTranslatedKeyboard(chatId);
+        await sendTranslatedMessage(
+          chatId,
+          'confirm_name',
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: keyboardText.yes, callback_data: 'name_confirm_yes' },
+                { text: keyboardText.no, callback_data: 'name_confirm_no' }
+              ]]
+            }
+          },
+          { firstName: state.userData.firstName, lastName: state.userData.lastName }
+        );
+        res.sendStatus(200);
+        return;
+      }
+
+      // Handle name confirmation
+      if (state.expected === "name_confirm" && callbackQueryData === "name_confirm_yes") {
         const fullName = `${state.userData.firstName} ${state.userData.lastName}`.trim();
         try {
           await models.User.update(
@@ -1793,11 +1806,22 @@ async function handleUpdate(req, res) {
             { where: { chatId } }
           );
           await sendTranslatedMessage(chatId, 'name_saved', {}, { fullName: fullName });
+          state.expected = "phone";
+          userStateById.set(chatId, state);
           await askPhone(chatId);
         } catch (e) {
           console.error("Failed to save user name:", e);
           await sendTranslatedMessage(chatId, 'name_save_error');
         }
+        res.sendStatus(200);
+        return;
+      }
+
+      // Handle name confirmation
+      if (state.expected === "name_confirm" && callbackQueryData === "name_confirm_no") {
+        state.expected = "first_name";
+        userStateById.set(chatId, state);
+        await sendTranslatedMessage(chatId, 'ask_first_name_again');
         res.sendStatus(200);
         return;
       }
