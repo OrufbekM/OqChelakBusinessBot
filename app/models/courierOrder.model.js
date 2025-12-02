@@ -1,39 +1,38 @@
 module.exports = (sequelize, Sequelize) => {
-  const User = sequelize.define(
-    "user",
+  const CourierOrder = sequelize.define(
+    "courier_order",
     {
       id: {
         type: Sequelize.INTEGER,
-        primaryKey: true,
         autoIncrement: true,
+        primaryKey: true,
       },
-      telegramId: {
-        type: Sequelize.BIGINT,
-        allowNull: false,
-        unique: true,
-      },
-      chatId: {
+      courierChatId: {
         type: Sequelize.BIGINT,
         allowNull: false,
       },
-      username: {
+      customerChatId: {
+        type: Sequelize.BIGINT,
+        allowNull: true,
+      },
+      customerUserId: {
+        type: Sequelize.BIGINT,
+        allowNull: true,
+      },
+      orderId: {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      fullName: {
+      productName: {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      phone: {
-        type: Sequelize.STRING,
+      liters: {
+        type: Sequelize.DECIMAL(10, 2),
         allowNull: true,
       },
-      allowedLocations: {
-        type: Sequelize.JSON,
-        defaultValue: ["all"],
-      },
-      currentLocation: {
-        type: Sequelize.STRING,
+      address: {
+        type: Sequelize.TEXT,
         allowNull: true,
       },
       latitude: {
@@ -44,18 +43,26 @@ module.exports = (sequelize, Sequelize) => {
         type: Sequelize.DECIMAL(10, 7),
         allowNull: true,
       },
-      deliveryRadius: {
-        type: Sequelize.DECIMAL(10, 2),
-        allowNull: true,
-      },
-      address: {
+      mapsUrl: {
         type: Sequelize.TEXT,
         allowNull: true,
       },
-      language: {
+      phone: {
         type: Sequelize.STRING,
-        defaultValue: 'uz',
+        allowNull: true,
+      },
+      customerName: {
+        type: Sequelize.STRING,
+        allowNull: true,
+      },
+      payload: {
+        type: Sequelize.JSON,
+        allowNull: true,
+      },
+      status: {
+        type: Sequelize.STRING,
         allowNull: false,
+        defaultValue: "pending",
       },
     },
     {
@@ -65,5 +72,6 @@ module.exports = (sequelize, Sequelize) => {
     }
   );
 
-  return User;
+  return CourierOrder;
 };
+

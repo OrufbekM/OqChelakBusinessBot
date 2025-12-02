@@ -57,10 +57,26 @@ function formatUzAddress(address) {
   const city = address.city || address.city_district || address.municipality;
   const state = address.state;
   const cleanState = state ? String(state).replace(/\s+viloyati$/i, "").trim() : null;
+  const districtRaw =
+    address.county ||
+    address.state_district ||
+    address.region ||
+    address.district ||
+    address.city_district ||
+    null;
+  const district = districtRaw ? String(districtRaw).replace(/\s*tumani$/i, "").trim() : null;
 
   const locality = village || town || null;
-  if (locality && (city || cleanState)) {
-    return `${locality}, ${city || cleanState}`;
+  const top = city || cleanState || null;
+
+  if (top && locality && district) {
+    return `${top}, ${locality} ${district}`;
+  }
+  if (top && locality) {
+    return `${top}, ${locality}`;
+  }
+  if (top && district) {
+    return `${top}, ${district}`;
   }
   if (city || cleanState) {
     return `${city || cleanState}`;
