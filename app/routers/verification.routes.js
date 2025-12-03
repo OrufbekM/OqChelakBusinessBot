@@ -11,18 +11,28 @@ const { notifySellerAboutOrder } = require("../controller/lib/telegram");
 
 router.post("/new-order", async (req, res) => {
   try {
-    const order = req.body.order || {}; 
-    const customer = req.body.customer || order.customer || null; 
+    const order = req.body.order || {};
+    const customer = req.body.customer || order.customer || null;
 
     if (!customer) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Customer object is required in body.customer or body.order.customer" });
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Customer object is required in body.customer or body.order.customer",
+      });
     }
-    if (customer.latitude === undefined || customer.longitude === undefined) {
+
+    if (!customer.phone) {
       return res
         .status(400)
-        .json({ ok: false, error: "Customer latitude and longitude are required" });
+        .json({ ok: false, error: "Customer phone number is required" });
+    }
+
+    if (customer.latitude === undefined || customer.longitude === undefined) {
+      return res.status(400).json({
+        ok: false,
+        error: "Customer latitude and longitude are required",
+      });
     }
 
     const enrichedCustomer = {
@@ -42,19 +52,24 @@ router.post("/new-order", async (req, res) => {
     );
 
     if (!result || !result?.candidates?.length) {
-      return res.status(404).json({ ok: false, error: "No courier found within radius" });
+      return res
+        .status(404)
+        .json({ ok: false, error: "No courier found within radius" });
     }
 
     const prItem = order?.product?.items?.[0] || {};
     const productName = prItem.name || order?.product?.name || "Sut";
-    const liters = prItem.quantity != null ? Number(prItem.quantity) : undefined;
+    const liters =
+      prItem.quantity != null ? Number(prItem.quantity) : undefined;
 
     const customerChatId =
       enrichedCustomer.chatId ||
       enrichedCustomer.telegramId ||
       enrichedCustomer.id ||
       enrichedCustomer.userId;
+
     const normalizedOrderId = getOrderIdentifier(order, enrichedCustomer);
+
     const normalizedOrder = { ...order };
     if (normalizedOrder.id === undefined || normalizedOrder.id === null) {
       normalizedOrder.id = normalizedOrderId;
@@ -62,7 +77,9 @@ router.post("/new-order", async (req, res) => {
 
     const activeCourier = result.courier;
     if (!activeCourier?.chatId) {
-      return res.status(404).json({ ok: false, error: "No courier chatId found" });
+      return res
+        .status(404)
+        .json({ ok: false, error: "No courier chatId found" });
     }
 
     const initialIndex = result.candidates.findIndex(
@@ -78,6 +95,7 @@ router.post("/new-order", async (req, res) => {
       candidates: result.candidates,
       assignedIndex: initialIndex >= 0 ? initialIndex : 0,
       activeCourierChatId: activeCourier.chatId,
+      phone: enrichedCustomer.phone,
     });
 
     await notifySellerAboutOrder({
@@ -90,14 +108,31 @@ router.post("/new-order", async (req, res) => {
       longitude: customer.longitude,
     });
 
-    await createCourierOrderRecord({
-      courierChatId: activeCourier.chatId,
-      customer: enrichedCustomer,
-      order: normalizedOrder,
+    async function createCourierOrderRecord({
+      courierChatId,
+      customer,
+      order,
       productName,
       liters,
-      address: result.customerAddress,
-    });
+      address,
+      phone,
+    }) {
+      return db.CourierOrder.create({
+        courierChatId,
+        customerChatId: customer.chatId || null,
+        customerUserId: customer.userId || null,
+        orderId: order.id,
+        productName,
+        liters,
+        address,
+        latitude: customer.latitude,
+        longitude: customer.longitude,
+        mapsUrl: address?.mapsUrl || null,
+        phone, // ⭐ save phone
+        customerName: customer.name || null,
+        payload: order,
+      });
+    }
 
     res.json({ ok: true, orderId: normalizedOrderId, courier: activeCourier });
   } catch (e) {
@@ -106,4 +141,3 @@ router.post("/new-order", async (req, res) => {
 });
 
 module.exports = router;
-
