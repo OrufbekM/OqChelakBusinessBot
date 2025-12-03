@@ -887,6 +887,27 @@ async function handleUpdate(req, res) {
         res.sendStatus(200);
         return;
       } else if (data === "order_confirm_yes") {
+        try {
+          try {
+            await telegram.post("/deleteMessage", {
+              chat_id: chatId,
+              message_id: messageId,
+            });
+          } catch (_) {}
+
+          const keyboardText = await getTranslatedKeyboard(chatId);
+          await sendMessage(chatId, await translate(chatId, 'order_received'), {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
+              ],
+              resize_keyboard: false,
+            },
+          });
+        } catch (e) {
+          console.error("Fallback accept handler error:", e.message || e);
+        }
         res.sendStatus(200);
         return;
       } else if (data.startsWith("order_confirm_yes:")) {
@@ -898,8 +919,6 @@ async function handleUpdate(req, res) {
             ? parseInt(rawOrderId, 10)
             : null;
         const confirmationMessageId = cq.message.message_id;
-
-        const keyboardText = await getTranslatedKeyboard(chatId);
 
         // Delete the order confirmation message
         try {
@@ -1064,7 +1083,21 @@ async function handleUpdate(req, res) {
           markOrderAccepted(normalizedOrderId, chatId);
         }
       } else if (data === "order_confirm_no") {
-        // legacy no-op: ignore bare cancel without identifiers
+        try {
+          try {
+            await telegram.post("/deleteMessage", {
+              chat_id: chatId,
+              message_id: messageId,
+            });
+          } catch (_) {}
+
+          await sendMessage(chatId, await translate(chatId, 'order_cancelled'), {
+            parse_mode: "HTML",
+          });
+        } catch (e) {
+          console.error("Fallback cancel handler error:", e.message || e);
+        }
+        
       } else if (data.startsWith("order_confirm_no:")) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
