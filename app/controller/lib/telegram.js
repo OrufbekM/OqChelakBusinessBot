@@ -178,6 +178,32 @@ function formatPhoneNumber(phone) {
   return null;
 }
 
+// Format phone for external API: 
+// +998 AA BBB CCCC (spaces) matching samples like "+998 00 000 0000"
+function formatPhoneNumberForApi(phone) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, "");
+  // Normalize to 998#########
+  let normalized = digits;
+  if (digits.length === 9 && /^9\d{8}$/.test(digits)) {
+    normalized = `998${digits}`;
+  }
+  if (/^998\d{9}$/.test(normalized)) {
+    const op = normalized.slice(3, 5);
+    const mid = normalized.slice(5, 8);
+    const tail = normalized.slice(8, 12);
+    return `+998 ${op} ${mid} ${tail}`;
+  }
+  if (/^\+998\d{9}$/.test(phone)) {
+    const only = phone.replace(/\D/g, "");
+    const op = only.slice(3, 5);
+    const mid = only.slice(5, 8);
+    const tail = only.slice(8, 12);
+    return `+998 ${op} ${mid} ${tail}`;
+  }
+  return null;
+}
+
 // Validate phone number
 function isValidPhoneNumber(phone) {
   return formatPhoneNumber(phone) !== null;
@@ -581,6 +607,21 @@ async function getUserOrders(userId) {
   }
 }
 
+// Retry wrapper to mitigate transient network errors when resolving real order IDs
+async function getUserOrdersWithRetry(userId, retries = 2, delayMs = 800) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const resp = await getUserOrders(userId);
+    if (resp) return resp;
+    lastError = new Error("getUserOrders returned null");
+    if (attempt < retries) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  console.error("getUserOrdersWithRetry exhausted:", lastError?.message);
+  return null;
+}
+
 async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
   try {
     const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(
@@ -590,9 +631,10 @@ async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
     // Prepare the update data
     const updateData = { status };
 
-    // If status is completed and we have a courier phone number, include it in the update
+    // If status is completed and we have a courier phone number, include it (formatted) in the update
     if (status === "completed" && courierPhone) {
-      updateData.phoneNumber = courierPhone;
+      const formattedPhone = formatPhoneNumberForApi(courierPhone) || courierPhone;
+      updateData.phoneNumber = formattedPhone;
 
       // Also send to the specified webhook URL
       try {
@@ -600,7 +642,7 @@ async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
           "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
           {
             orderId,
-            phoneNumber: courierPhone,
+            phoneNumber: formattedPhone,
           },
           {
             timeout: 10000,
@@ -931,6 +973,7 @@ async function handleUpdate(req, res) {
         }
 
         // Send new message instead of editing
+        const keyboardText = await getTranslatedKeyboard(chatId);
         await sendMessage(chatId, await translate(chatId, 'order_received'), {
           parse_mode: "HTML",
           reply_markup: {
@@ -964,7 +1007,7 @@ async function handleUpdate(req, res) {
           customerChatId &&
           (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
         ) {
-          const ordersResp = await getUserOrders(customerChatId);
+          const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
           const list = Array.isArray(ordersResp)
             ? ordersResp
             : ordersResp?.orders || ordersResp?.data || [];
@@ -1127,7 +1170,7 @@ async function handleUpdate(req, res) {
           customerChatId &&
           (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
         ) {
-          const ordersResp = await getUserOrders(customerChatId);
+          const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
           const list = Array.isArray(ordersResp)
             ? ordersResp
             : ordersResp?.orders || ordersResp?.data || [];
@@ -1299,7 +1342,7 @@ async function handleUpdate(req, res) {
                 resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
               if (customerChatId) {
                 try {
-                  const ordersResp = await getUserOrders(customerChatId);
+                  const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
                   const ordersList = Array.isArray(ordersResp)
                     ? ordersResp
                     : ordersResp?.data || [];
@@ -1426,20 +1469,21 @@ async function handleUpdate(req, res) {
 
             // Send seller info USING POST METHOD
             if (numericExternalOrderId !== null && sellerPhone) {
+              const apiPhone = formatPhoneNumberForApi(sellerPhone) || sellerPhone;
               try {
                 console.log(
                   `Making POST request to seller info endpoint for order: ${numericExternalOrderId}`
                 );
                 console.log("Seller info request body:", {
                   orderId: numericExternalOrderId,
-                  phoneNumber: sellerPhone,
+                  phoneNumber: apiPhone,
                 });
 
                 const sellerResponse = await axios.post(
                   "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
                   {
                     orderId: numericExternalOrderId,
-                    phoneNumber: sellerPhone,
+                    phoneNumber: apiPhone,
                   },
                   {
                     headers: {
@@ -1667,55 +1711,8 @@ async function handleUpdate(req, res) {
         return;
         }
 
-      // Handle location input as text
+      // Remove manual text location entry handling to simplify flow
       const state = userStateById.get(chatId) || {};
-      if (state.expected === "location_text" && text) {
-        try {
-          // Save the text address
-          await models.User.update(
-            {
-              address: text,
-              currentLocation: "text",
-            },
-            { where: { chatId } }
-          );
-
-          const user = await models.User.findOne({ where: { chatId } });
-          const uname = user?.username ? `@${user.username}` : "—";
-          const fullName = user?.fullName || "—";
-          const phone = user?.phone || "—";
-          const address = user?.address || "—";
-
-          await sendTranslatedMessage(
-            chatId,
-            'user_info',
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    { text: await translate(chatId, 'yes'), callback_data: "confirm_yes" },
-                    { text: await translate(chatId, 'no'), callback_data: "confirm_no" },
-                  ],
-                ],
-              },
-            },
-            {
-              username: uname,
-              fullName: fullName,
-              phone: phone,
-              address: address
-            }
-          );
-          
-          state.expected = null;
-          userStateById.set(chatId, state);
-        } catch (e) {
-          console.error("Failed to save text address:", e);
-          await sendTranslatedMessage(chatId, 'location_save_error');
-        }
-        res.sendStatus(200);
-        return;
-      }
 
       if (message.location && typeof message.location.latitude === "number") {
         const st = userStateById.get(chatId) || {};
