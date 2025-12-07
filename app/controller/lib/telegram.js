@@ -8,20 +8,19 @@ const {
   formatUzAddress,
 } = require("../../utils/geocode");
 const {
-  createCourierOrderRecord, 
+  createCourierOrderRecord,
   getNextCourierForOrder,
   clearOrderAssignment,
   markOrderAccepted,
 } = require("../verification.controller");
 const axios = require("axios");
-const { inlineKeyboard } = require("telegraf/markup");
 
 const { t, changeLanguage } = require("../../config/i18n");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const STATUS_API_BASE =
   process.env.STATUS_API_BASE ||
-  "https://zymogenic-edmond-lamellately.ngrok-free.dev";
+  "https://oqchelak-bot.onrender.com";
 
 const userStateById = new Map();
 
@@ -36,9 +35,9 @@ const ORDER_STATUS_EMOJI = {
 async function getUserLanguage(chatId) {
   try {
     const user = await models.User.findOne({ where: { chatId } });
-    return user?.language || 'uz';
+    return user?.language || "uz";
   } catch (error) {
-    return 'uz';
+    return "uz";
   }
 }
 
@@ -46,11 +45,10 @@ async function getUserLanguage(chatId) {
 async function translate(chatId, key, data = {}) {
   try {
     const language = await getUserLanguage(chatId);
-    // Use the async t() function from i18n
     return await t(key, { lng: language, ...data });
   } catch (error) {
     console.error(`Error translating key "${key}":`, error);
-    return key; // Return the key as fallback
+    return key;
   }
 }
 
@@ -60,8 +58,7 @@ async function sendTranslatedMessage(chatId, key, extra = {}, data = {}) {
     const text = await translate(chatId, key, data);
     return await sendMessage(chatId, text, extra);
   } catch (error) {
-    console.error('Error in sendTranslatedMessage:', error);
-    // Fallback to key if translation fails
+    console.error("Error in sendTranslatedMessage:", error);
     return await sendMessage(chatId, key, extra);
   }
 }
@@ -70,29 +67,28 @@ async function sendTranslatedMessage(chatId, key, extra = {}, data = {}) {
 async function getTranslatedKeyboard(chatId) {
   try {
     return {
-      phone_share: await translate(chatId, 'phone_share'),
-      location_share: await translate(chatId, 'location_share'),
-      back: await translate(chatId, 'back'),
-      yes: await translate(chatId, 'yes'),
-      no: await translate(chatId, 'no'),
-      delivered: await translate(chatId, 'delivered'),
-      not_delivered: await translate(chatId, 'not_delivered'),
-      my_orders: await translate(chatId, 'my_orders'),
-      change_language: await translate(chatId, 'change_language')
+      phone_share: await translate(chatId, "phone_share"),
+      location_share: await translate(chatId, "location_share"),
+      back: await translate(chatId, "back"),
+      yes: await translate(chatId, "yes"),
+      no: await translate(chatId, "no"),
+      delivered: await translate(chatId, "delivered"),
+      not_delivered: await translate(chatId, "not_delivered"),
+      my_orders: await translate(chatId, "my_orders"),
+      change_language: await translate(chatId, "change_language"),
     };
   } catch (error) {
-    console.error('Error getting translated keyboard:', error);
-    // Fallback to Uzbek Latin if there's an error
+    console.error("Error getting translated keyboard:", error);
     return {
-      phone_share: "Raqamni ulashish ",
-      location_share: "Manzilni ulashish ",
-      back: "Orqaga ",
-      yes: "Ha ",
-      no: "Yo'q ",
-      delivered: "Yetkazildi ",
-      not_delivered: "Yetkazilmadi ",
-      my_orders: "Buyurtmalarim ",
-      change_language: "Tilni o'zgartirish "
+      phone_share: "Raqamni ulashish",
+      location_share: "Manzilni ulashish",
+      back: "Orqaga",
+      yes: "Ha",
+      no: "Yo'q",
+      delivered: "Yetkazildi",
+      not_delivered: "Yetkazilmadi",
+      my_orders: "Buyurtmalarim",
+      change_language: "Tilni o'zgartirish",
     };
   }
 }
@@ -142,8 +138,6 @@ function toNumericId(value) {
   }
 
   const str = String(value).trim();
-
-  // If it's a pure number, use it directly
   if (/^\d+$/.test(str)) {
     const num = Number(str);
     return Number.isFinite(num) ? num : null;
@@ -156,52 +150,67 @@ function toNumericId(value) {
 function formatPhoneNumber(phone) {
   if (!phone) return null;
   
-  // Remove all non-digit characters
-  const cleaned = phone.replace(/\D/g, '');
+  // Barcha raqam bo'lmagan belgilarni olib tashlash
+  const cleaned = phone.replace(/\D/g, "");
   
-  // If it's 9 digits, add +998 prefix
-  if (cleaned.length === 9 && /^[9]\d{8}$/.test(cleaned)) {
-    return '+998' + cleaned;
+  // +998... formatida bo'lsa
+  if (cleaned.startsWith('998') && cleaned.length === 12) {
+    return `+${cleaned}`;
   }
   
-  // If it's 12 digits and starts with 998, add + prefix
-  if (cleaned.length === 12 && /^998\d{9}$/.test(cleaned)) {
-    return '+' + cleaned;
+  // Faqat 9 ta raqam bo'lsa (90... formatida)
+  if (cleaned.length === 9 && cleaned.startsWith('9')) {
+    return `+998${cleaned}`;
   }
   
-  // If it's 13 digits and starts with +998, return as is
-  if (cleaned.length === 13 && /^\+998\d{9}$/.test(phone)) {
-    return phone;
+  // + bilan boshlansa
+  if (cleaned.startsWith('998') && phone.startsWith('+')) {
+    return phone; // Aslini qaytarish
   }
   
-  // If it doesn't match any pattern, return null
   return null;
 }
-
-// Format phone for external API: 
-// +998 AA BBB CCCC (spaces) matching samples like "+998 00 000 0000"
+// Format phone for external API
 function formatPhoneNumberForApi(phone) {
   if (!phone) return null;
-  const digits = String(phone).replace(/\D/g, "");
-  // Normalize to 998#########
-  let normalized = digits;
-  if (digits.length === 9 && /^9\d{8}$/.test(digits)) {
-    normalized = `998${digits}`;
+  
+  // Avval tozalash
+  const formattedPhone = formatPhoneNumber(phone);
+  if (!formattedPhone) return null;
+  
+  // Formatlash: +998 XX XXX XX XX
+  const digits = formattedPhone.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith('998')) {
+    const country = digits.slice(0, 3); // 998
+    const operator = digits.slice(3, 5); // 90
+    const part1 = digits.slice(5, 8);   // 123
+    const part2 = digits.slice(8, 12);  // 4567
+    return `+${country} ${operator} ${part1} ${part2}`;
   }
-  if (/^998\d{9}$/.test(normalized)) {
-    const op = normalized.slice(3, 5);
-    const mid = normalized.slice(5, 8);
-    const tail = normalized.slice(8, 12);
-    return `+998 ${op} ${mid} ${tail}`;
+  
+  return formattedPhone;
+}
+
+// Get customer's phone number for API calls
+async function getCustomerPhoneForApi(chatId) {
+  try {
+    const user = await models.User.findOne({
+      where: { chatId },
+      attributes: ["phone"],
+      raw: true,
+    });
+    
+    if (!user || !user.phone) {
+      console.error(`No phone found for chatId: ${chatId}`);
+      return null;
+    }
+    
+    // Telefon raqamni tozalash
+    return formatPhoneNumber(user.phone);
+  } catch (error) {
+    console.error(`Error getting customer phone for chatId ${chatId}:`, error);
+    return null;
   }
-  if (/^\+998\d{9}$/.test(phone)) {
-    const only = phone.replace(/\D/g, "");
-    const op = only.slice(3, 5);
-    const mid = only.slice(5, 8);
-    const tail = only.slice(8, 12);
-    return `+998 ${op} ${mid} ${tail}`;
-  }
-  return null;
 }
 
 // Validate phone number
@@ -209,19 +218,17 @@ function isValidPhoneNumber(phone) {
   return formatPhoneNumber(phone) !== null;
 }
 
-// Build order notification text with geocoded address and maps link
-async function buildOrderNotificationText(
-  customerChatId,
-  productName,
-  liters,
-  opts = {}
-) {
+// Build order notification text
+async function buildOrderNotificationText(customerChatId, productName, liters, opts = {}) {
   let address = "—";
   let lat;
   let lon;
   let mapsUrl = "";
   const name = productName || "Milk";
   const qty = liters ? `${liters}L` : "—";
+
+  let customerName = "—";
+  let phone = "—";
 
   try {
     const user = await models.User.findOne({
@@ -230,31 +237,35 @@ async function buildOrderNotificationText(
     lat = typeof opts.latitude === "number" ? opts.latitude : user?.latitude;
     lon = typeof opts.longitude === "number" ? opts.longitude : user?.longitude;
 
+    customerName = opts.customerName || user?.fullName || user?.username || customerName;
+    phone = opts.phone || user?.phone || phone;
+
     if (typeof lat === "number" && typeof lon === "number") {
       const detailed = await reverseGeocodeDetailed(lat, lon);
       const formatted = detailed?.address
         ? formatUzAddress(detailed.address)
         : null;
-      address =
-        formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
+      address = formatted || (await reverseGeocode(lat, lon)) || `${lat}, ${lon}`;
       mapsUrl = `https://maps.google.com/?q=${lat},${lon}`;
     }
   } catch (e) {
     console.error("buildOrderNotificationText failed:", e.message || e);
   }
 
-  const viewOnMap = await translate(customerChatId, 'view_on_map');
+  const viewOnMap = await translate(customerChatId, "view_on_map");
   const locationText = `<a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
 
-  return await translate(customerChatId, 'order_notification', {
+  return await translate(customerChatId, "order_notification", {
     productName: name,
     quantity: qty,
     address: address,
-    location: locationText
+    location: locationText,
+    customerName,
+    phone,
   });
 }
 
-// Send order request to seller with inline confirm/cancel buttons
+// Send order request to seller
 async function notifySellerAboutOrder({
   sellerChatId,
   customerChatId,
@@ -263,19 +274,18 @@ async function notifySellerAboutOrder({
   liters,
   latitude,
   longitude,
+  customerName,
+  phone,
 }) {
-  const text = await buildOrderNotificationText(
-    customerChatId,
-    productName,
-    liters,
-    {
-      latitude,
-      longitude,
-    }
-  );
-  
+  const text = await buildOrderNotificationText(customerChatId, productName, liters, {
+    latitude,
+    longitude,
+    customerName,
+    phone,
+  });
+
   const keyboardText = await getTranslatedKeyboard(sellerChatId);
-  
+
   const inline_keyboard = [
     [
       {
@@ -309,8 +319,7 @@ function escapeHtml(value) {
 function getCourierOrderUniqueKey(order = {}) {
   const externalId = resolveExternalOrderId(order);
   if (externalId) {
-    const customerId =
-      resolveCustomerChatId(order) || order.customerChatId || "";
+    const customerId = resolveCustomerChatId(order) || order.customerChatId || "";
     return `ext:${customerId}:${externalId}`;
   }
   if (order.orderId) {
@@ -331,43 +340,36 @@ async function formatCourierOrderForMessage(chatId, order, showQuestion = true) 
   const address = escapeHtml(order.address || "—");
   const phone = escapeHtml(order.phone || "—");
   const customerName = escapeHtml(order.customerName || "—");
-  
-  const orderName = await translate(chatId, 'order_name');
-  const litersText = await translate(chatId, 'liters');
-  const addressText = await translate(chatId, 'address');
-  const phoneText = await translate(chatId, 'phone');
-  const customerText = await translate(chatId, 'customer');
-  const locationText = await translate(chatId, 'location');
-  const viewOnMap = await translate(chatId, 'view_on_map');
-  
+
+  const orderName = await translate(chatId, "order_name");
+  const litersText = await translate(chatId, "liters");
+  const addressText = await translate(chatId, "address");
+  const phoneText = await translate(chatId, "phone");
+  const customerText = await translate(chatId, "customer");
+  const locationText = await translate(chatId, "location");
+  const viewOnMap = await translate(chatId, "view_on_map");
+
   const orderNameLine = ` ${orderName}: ${productName}`;
   const litersLine = ` ${litersText}: ${liters}`;
   const addressLine = ` ${addressText}: ${address}`;
   const phoneLine = ` ${phoneText}: ${phone}`;
   const customerLine = ` ${customerText}: ${customerName}`;
-  
+
   let locationLine = ` ${locationText}: —`;
   const mapsUrl =
     order.mapsUrl ||
     (order.latitude && order.longitude
       ? `https://maps.google.com/?q=${order.latitude},${order.longitude}`
       : null);
-      
+
   if (mapsUrl) {
     locationLine = ` ${locationText}: <a href="${escapeHtml(mapsUrl)}">${viewOnMap}</a>`;
   }
 
-  const parts = [
-    orderNameLine,
-    litersLine,
-    addressLine,
-    locationLine,
-    phoneLine,
-    customerLine,
-  ];
+  const parts = [orderNameLine, litersLine, addressLine, locationLine, phoneLine, customerLine];
 
   if (showQuestion) {
-    const deliveryQuestion = await translate(chatId, 'order_delivery_question');
+    const deliveryQuestion = await translate(chatId, "order_delivery_question");
     parts.push(`\n${deliveryQuestion}`);
   }
 
@@ -388,12 +390,12 @@ async function getCourierOrdersByChatId(chatId, limit = null) {
   return models.CourierOrder.findAll(options);
 }
 
-// Delete previous order messages before sending new ones
+// Delete previous order messages
 async function deletePreviousOrderMessages(chatId) {
   try {
     const state = userStateById.get(chatId) || {};
     const previousMessages = state.orderMessages || [];
-    
+
     for (const msgId of previousMessages) {
       try {
         await telegram.post("/deleteMessage", {
@@ -401,15 +403,13 @@ async function deletePreviousOrderMessages(chatId) {
           message_id: msgId,
         });
       } catch (e) {
-        // Message might already be deleted
         console.log("Message already deleted:", e.message || e);
       }
     }
-    
-    // Clear the message IDs from state
+
     state.orderMessages = [];
     userStateById.set(chatId, state);
-    
+
     return true;
   } catch (error) {
     console.error("Error deleting previous order messages:", error);
@@ -420,17 +420,15 @@ async function deletePreviousOrderMessages(chatId) {
 // Send each order as a separate message
 async function sendCourierOrdersList(chatId) {
   try {
-    // Delete previous order messages first
     await deletePreviousOrderMessages(chatId);
-    
+
     const allOrders = await getCourierOrdersByChatId(chatId);
-    // Exclude cancelled orders from the visible list
     const visibleOrders = (allOrders || []).filter(
       (o) => (o.status || "").toLowerCase() !== "cancelled"
     );
 
     if (!visibleOrders || visibleOrders.length === 0) {
-      const msgId = await sendTranslatedMessage(chatId, 'no_orders');
+      const msgId = await sendTranslatedMessage(chatId, "no_orders");
       if (msgId) {
         const state = userStateById.get(chatId) || {};
         state.orderMessages = [msgId];
@@ -453,18 +451,13 @@ async function sendCourierOrdersList(chatId) {
     }
 
     const keyboardText = await getTranslatedKeyboard(chatId);
-    
-    // Get state for storing message IDs
     const state = userStateById.get(chatId) || {};
     state.orderMessages = [];
 
-    // Send each order as a separate message
     for (const order of uniqueOrders) {
       const orderText = await formatCourierOrderForMessage(chatId, order, order.status !== "completed");
-      
-      // Build inline keyboard for each order
+
       const inline_keyboard = [];
-      
       if (order.status !== "completed") {
         inline_keyboard.push([
           {
@@ -479,78 +472,58 @@ async function sendCourierOrdersList(chatId) {
       }
 
       const msgId = await sendMessage(chatId, orderText, {
-        reply_markup: { inline_keyboard }
+        reply_markup: { inline_keyboard },
       });
-      
+
       if (msgId) {
         state.orderMessages.push(msgId);
       }
     }
-    
-    // Update state with new message IDs
-    userStateById.set(chatId, state);
 
+    userStateById.set(chatId, state);
   } catch (e) {
     console.error("sendCourierOrdersList failed:", e.message || e);
-    await sendTranslatedMessage(chatId, 'orders_error');
+    await sendTranslatedMessage(chatId, "orders_error");
   }
 }
 
-async function sendCourierOrderDetails(
-  chatId,
-  orderId,
-  ordersListMessageId = null
-) {
+async function sendCourierOrderDetails(chatId, orderId, ordersListMessageId = null) {
   try {
     const order = await models.CourierOrder.findByPk(orderId);
 
     if (!order) {
-      await sendTranslatedMessage(chatId, 'order_not_found');
+      await sendTranslatedMessage(chatId, "order_not_found");
       return;
     }
 
-    // Get global order number
     const allOrders = await getCourierOrdersByChatId(chatId);
     const orderIndex = allOrders.findIndex((o) => o.id === orderId);
     const orderNumber =
       orderIndex !== -1
-        ? `${orderIndex + 1}. ${order.productName || await translate(chatId, 'product')} ${
+        ? `${orderIndex + 1}. ${order.productName || await translate(chatId, "product")} ${
             order.liters ? `${order.liters}L` : ""
           }`
         : "";
 
-    // Format order details
-    const orderText = await formatCourierOrderForMessage(
-      chatId,
-      order,
-      order.status !== "completed"
-    );
+    const orderText = await formatCourierOrderForMessage(chatId, order, order.status !== "completed");
     const fullText = orderNumber ? `${orderNumber}\n\n${orderText}` : orderText;
 
     const keyboardText = await getTranslatedKeyboard(chatId);
-
-    // Build inline keyboard
     const inline_keyboard = [];
 
-    // Accept/Decline buttons (only if not completed)
     if (order.status !== "completed") {
       inline_keyboard.push([
         {
           text: keyboardText.yes,
-          callback_data: `order_delivered:${order.id}:${
-            ordersListMessageId || ""
-          }`,
+          callback_data: `order_delivered:${order.id}:${ordersListMessageId || ""}`,
         },
         {
           text: keyboardText.no,
-          callback_data: `order_not_delivered:${order.id}:${
-            ordersListMessageId || ""
-          }`,
+          callback_data: `order_not_delivered:${order.id}:${ordersListMessageId || ""}`,
         },
       ]);
     }
 
-    // Back button to return to list (also serves as close)
     inline_keyboard.push([
       {
         text: keyboardText.back,
@@ -565,16 +538,11 @@ async function sendCourierOrderDetails(
     await sendMessage(chatId, fullText, { reply_markup: replyMarkup });
   } catch (e) {
     console.error("sendCourierOrderDetails failed:", e.message || e);
-    await sendTranslatedMessage(chatId, 'order_details_error');
+    await sendTranslatedMessage(chatId, "order_details_error");
   }
 }
 
-async function updateCourierOrderStatusLocal({
-  courierChatId,
-  customerChatId,
-  orderId,
-  status,
-}) {
+async function updateCourierOrderStatusLocal({ courierChatId, customerChatId, orderId, status }) {
   if (!models?.CourierOrder) return;
   const normalizedStatus = (status || "").toString().toLowerCase();
   const where = {};
@@ -594,80 +562,161 @@ async function updateCourierOrderStatusLocal({
   }
 }
 
-async function getUserOrders(userId) {
+// Modified to use phone number as userId
+async function getUserOrders(identifier) {
   try {
-    const url = `${STATUS_API_BASE}/api/status?userId=${encodeURIComponent(
-      userId
-    )}`;
-    const { data } = await axios.get(url, { timeout: 15000 });
-    return data;
+    console.log("getUserOrders called with identifier:", identifier, "type:", typeof identifier);
+    
+    // Agar identifier raqam bo'lsa (userId), to'g'ridan-to'g'ri ishlatamiz
+    if (typeof identifier === 'number' || (typeof identifier === 'string' && /^\d+$/.test(identifier))) {
+      const numericId = toNumericId(identifier);
+      if (!numericId) {
+        console.error("Invalid userId format:", identifier);
+        return null;
+      }
+      
+      const url = `${STATUS_API_BASE}/api/status?userId=${encodeURIComponent(numericId)}`;
+      console.log("Calling getUserOrders by userId with URL:", url);
+      
+      try {
+        const { data } = await axios.get(url, { timeout: 15000 });
+        console.log("getUserOrders response:", data);
+        return data;
+      } catch (apiError) {
+        console.error("API error for userId:", apiError.message || apiError);
+        
+        // Agar userId orqali topilmasa, telefon raqam orqali urinib ko'ramiz
+        // Avval telefon raqamni topish
+        const user = await models.User.findOne({
+          where: { id: numericId }
+        });
+        
+        if (user && user.phone) {
+          const phoneUrl = `${STATUS_API_BASE}/api/status?phone=${encodeURIComponent(formatPhoneNumberForApi(user.phone))}`;
+          console.log("Trying by phone with URL:", phoneUrl);
+          
+          try {
+            const { data: phoneData } = await axios.get(phoneUrl, { timeout: 15000 });
+            console.log("getUserOrders response by phone:", phoneData);
+            return phoneData;
+          } catch (phoneError) {
+            console.error("API error for phone:", phoneError.message || phoneError);
+          }
+        }
+        
+        return null;
+      }
+    }
+    // Agar identifier telefon raqam bo'lsa
+    else if (typeof identifier === 'string') {
+      // Telefon raqamni formatlash
+      const formattedPhone = formatPhoneNumber(identifier);
+      if (!formattedPhone) {
+        console.error("Invalid phone number format:", identifier);
+        return null;
+      }
+      
+      const phoneUrl = `${STATUS_API_BASE}/api/status?phone=${encodeURIComponent(formatPhoneNumberForApi(formattedPhone))}`;
+      console.log("Calling getUserOrders by phone with URL:", phoneUrl);
+      
+      try {
+        const { data } = await axios.get(phoneUrl, { timeout: 15000 });
+        console.log("getUserOrders response by phone:", data);
+        return data;
+      } catch (phoneError) {
+        console.error("API error for phone:", phoneError.message || phoneError);
+        return null;
+      }
+    } else {
+      console.error("Invalid identifier type:", typeof identifier, "value:", identifier);
+      return null;
+    }
   } catch (e) {
-    console.error("getUserOrders failed:", e.response?.data || e.message || e);
+    console.error("getUserOrders failed:", e.message || e);
     return null;
   }
 }
 
-// Retry wrapper to mitigate transient network errors when resolving real order IDs
-async function getUserOrdersWithRetry(userId, retries = 2, delayMs = 800) {
+async function getUserOrdersWithRetry(identifier, retries = 2, delayMs = 800) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const resp = await getUserOrders(userId);
+    const resp = await getUserOrders(identifier);
     if (resp) return resp;
     lastError = new Error("getUserOrders returned null");
     if (attempt < retries) {
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  console.error("getUserOrdersWithRetry exhausted:", lastError?.message);
+  console.error("getUserOrdersWithRetry exhausted for identifier:", identifier, lastError?.message);
   return null;
 }
 
-async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
+// Modified to use phone number as userId
+async function updateOrderStatus(identifier, orderId, status, courierPhone = null) {
   try {
-    const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(
-      userId
-    )}/order/${encodeURIComponent(orderId)}`;
+    let url;
+    let numericId;
+    
+    // Agar identifier raqam bo'lsa (userId)
+    if (typeof identifier === 'number' || (typeof identifier === 'string' && /^\d+$/.test(identifier))) {
+      numericId = toNumericId(identifier);
+      if (!numericId) {
+        throw new Error(`Invalid userId format: ${identifier}`);
+      }
+      url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(numericId)}/order/${encodeURIComponent(orderId)}`;
+    }
+    // Agar identifier telefon raqam bo'lsa
+    else if (typeof identifier === 'string') {
+      const formattedPhone = formatPhoneNumberForApi(identifier);
+      if (!formattedPhone) {
+        throw new Error(`Invalid phone format: ${identifier}`);
+      }
+      // API telefon raqam orqali yangilashni qo'llab-quvvatlasa
+      url = `${STATUS_API_BASE}/api/status/phone/${encodeURIComponent(formattedPhone.replace(/\s+/g, ''))}/order/${encodeURIComponent(orderId)}`;
+    } else {
+      throw new Error(`Invalid identifier type: ${typeof identifier}`);
+    }
+    
+    const numericOrderId = toNumericId(orderId);
+    if (!numericOrderId) {
+      throw new Error(`Invalid orderId format: ${orderId}`);
+    }
+    
+    console.log("Calling updateOrderStatus with URL:", url);
 
-    // Prepare the update data
     const updateData = { status };
 
-    // If status is completed and we have a courier phone number, include it (formatted) in the update
     if (status === "completed" && courierPhone) {
-      const formattedPhone = formatPhoneNumberForApi(courierPhone) || courierPhone;
-      updateData.phoneNumber = formattedPhone;
+      const formattedCourierPhone = formatPhoneNumberForApi(courierPhone) || courierPhone;
+      updateData.phoneNumber = formattedCourierPhone;
 
-      // Also send to the specified webhook URL
       try {
         await axios.post(
-          "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
+          `${STATUS_API_BASE}/api/status/seller/info/`,
           {
-            orderId,
-            phoneNumber: formattedPhone,
+            orderId: numericOrderId,
+            phoneNumber: formattedCourierPhone,
           },
           {
             timeout: 10000,
             headers: { "Content-Type": "application/json" },
           }
         );
+        console.log("Seller info sent successfully for order:", numericOrderId);
       } catch (webhookError) {
-        console.error(
-          "Failed to send courier phone to webhook:",
-          webhookError.message || webhookError
-        );
-        // Don't fail the whole operation if webhook fails
+        console.error("Failed to send courier phone to webhook:", webhookError.message || webhookError);
       }
     }
 
+    console.log("Sending update data:", updateData);
     const { data } = await axios.put(url, updateData, {
       timeout: 15000,
       headers: { "Content-Type": "application/json" },
     });
+    console.log("updateOrderStatus response:", data);
     return data;
   } catch (e) {
-    console.error(
-      "updateOrderStatus failed:",
-      e.response?.data || e.message || e
-    );
+    console.error("updateOrderStatus failed:", e.response?.data || e.message || e);
     throw e;
   }
 }
@@ -684,20 +733,16 @@ async function sendMessage(chatId, text, extra) {
       parse_mode: "HTML",
       ...extra,
     });
-    console.log("sendMessage ok:", resp.data);
     return resp.data.result.message_id;
   } catch (err) {
-    console.error(
-      "sendMessage failed:",
-      err.response?.data || err.message || err
-    );
+    console.error("sendMessage failed:", err.response?.data || err.message || err);
   }
 }
 
 async function askPhone(chatId) {
   const keyboardText = await getTranslatedKeyboard(chatId);
-  
-  await sendTranslatedMessage(chatId, 'ask_phone', {
+
+  await sendTranslatedMessage(chatId, "ask_phone", {
     reply_markup: {
       keyboard: [[{ text: keyboardText.phone_share, request_contact: true }]],
       resize_keyboard: true,
@@ -708,12 +753,10 @@ async function askPhone(chatId) {
 
 async function askLocation(chatId) {
   const keyboardText = await getTranslatedKeyboard(chatId);
-  
-  await sendTranslatedMessage(chatId, 'ask_location', {
+
+  await sendTranslatedMessage(chatId, "ask_location", {
     reply_markup: {
-      keyboard: [
-        [{ text: keyboardText.location_share, request_location: true }]
-      ],
+      keyboard: [[{ text: keyboardText.location_share, request_location: true }]],
       resize_keyboard: true,
       one_time_keyboard: true,
     },
@@ -722,29 +765,27 @@ async function askLocation(chatId) {
 
 async function homeMenu(chatId) {
   const keyboardText = await getTranslatedKeyboard(chatId);
-  
-  await sendTranslatedMessage(chatId, 'home_menu', {
+
+  await sendTranslatedMessage(chatId, "home_menu", {
     reply_markup: {
       inline_keyboard: [
-        [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-        [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+        [{ text: keyboardText.my_orders, callback_data: "my_orders" }],
+        [{ text: keyboardText.change_language, callback_data: "change_language" }],
       ],
       resize_keyboard: false,
-
     },
   });
 }
 
 async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
   const keyboardText = await getTranslatedKeyboard(chatId);
-  
+
   const reply_markup = {
     inline_keyboard: [
-      [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-      [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+      [{ text: keyboardText.my_orders, callback_data: "my_orders" }],
+      [{ text: keyboardText.change_language, callback_data: "change_language" }],
     ],
     resize_keyboard: false,
-
   };
 
   if (extra.message_id) {
@@ -757,10 +798,7 @@ async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
         reply_markup: reply_markup,
       });
     } catch (e) {
-      console.log(
-        "Could not edit message, sending new message instead:",
-        e.message || e
-      );
+      console.log("Could not edit message, sending new message instead:", e.message || e);
       await sendMessage(chatId, message, { reply_markup });
     }
   } else {
@@ -771,7 +809,7 @@ async function sendHomeMenuWithMessage(chatId, message, extra = {}) {
 async function handleUpdate(req, res) {
   try {
     const update = req.body;
-    console.log("Update received:", JSON.stringify(update));
+    console.log("Update received:", JSON.stringify(update, null, 2));
 
     if (update.callback_query) {
       const cq = update.callback_query;
@@ -779,124 +817,92 @@ async function handleUpdate(req, res) {
       const data = cq.data;
       const messageId = cq.message.message_id;
 
-      // Answer the callback query to remove the loading state
       await telegram.post("/answerCallbackQuery", {
         callback_query_id: cq.id,
       });
 
+      console.log(`Processing callback query: ${data} from chatId: ${chatId}`);
+
+      // Handle different callback queries
       if (data === "my_orders") {
-        // Delete previous order messages before sending new ones
         await deletePreviousOrderMessages(chatId);
         await sendCourierOrdersList(chatId);
         res.sendStatus(200);
         return;
-
       } else if (data === "change_language") {
-        // Get current language for debug purposes
         const currentLanguage = await getUserLanguage(chatId);
-        console.log(`Current language for user ${chatId}: ${currentLanguage}`);
-        
-        // Get translated language selection message
-        const selectLangText = await translate(chatId, 'select_language');
-        const latinText = await translate(chatId, 'Uzbek');
-        const cyrillicText = await translate(chatId, 'Krilcha');
-        const russianText = await translate(chatId, 'Ruscha'); // Rus tilini qo'shing
-        
+        const selectLangText = await translate(chatId, "select_language");
+        const latinText = await translate(chatId, "Uzbek");
+        const cyrillicText = await translate(chatId, "Krilcha");
+        const russianText = await translate(chatId, "Ruscha");
+
         await sendMessage(chatId, selectLangText, {
           reply_markup: {
             inline_keyboard: [
-              [{
-                text: ` ${latinText}${currentLanguage === 'uz' ? ' ' : ''}`,
-                callback_data: "lang_uz"
-              }],
-              [{
-                text: ` ${cyrillicText}${currentLanguage === 'uz_cyrl' ? ' ' : ''}`, 
-                callback_data: "lang_uz_cyrl"
-              }],
-              [{
-                text: ` ${russianText}${currentLanguage === 'ru' ? ' ' : ''}`, 
-                callback_data: "lang_ru"
-              }]
-            ]
-          }
+              [
+                {
+                  text: ` ${latinText}${currentLanguage === "uz" ? " " : ""}`,
+                  callback_data: "lang_uz",
+                },
+              ],
+              [
+                {
+                  text: ` ${cyrillicText}${currentLanguage === "uz_cyrl" ? " " : ""}`,
+                  callback_data: "lang_uz_cyrl",
+                },
+              ],
+              [
+                {
+                  text: ` ${russianText}${currentLanguage === "ru" ? " " : ""}`,
+                  callback_data: "lang_ru",
+                },
+              ],
+            ],
+          },
         });
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz") {
-        console.log(' Changing language to Uzbek Latin');
-        
-        const updateResult = await models.User.update(
-          { language: 'uz' },
-          { where: { chatId } }
-        );
-        console.log('Database update result:', updateResult);
-        
-        const changeResult = await changeLanguage('uz');
-        console.log('Language change result:', changeResult);
-        
+        await models.User.update({ language: "uz" }, { where: { chatId } });
+        await changeLanguage("uz");
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
             message_id: messageId,
           });
         } catch (e) {}
-
-        await sendTranslatedMessage(chatId, 'language_changed');
+        await sendTranslatedMessage(chatId, "language_changed");
         await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "lang_uz_cyrl") {
-        console.log(' Changing language to Uzbek Cyrillic');
-        
-        const updateResult = await models.User.update(
-          { language: 'uz_cyrl' },
-          { where: { chatId } }
-        );
-        console.log('Database update result:', updateResult);
-        
-        const changeResult = await changeLanguage('uz_cyrl');
-        console.log('Language change result:', changeResult);
-        
+        await models.User.update({ language: "uz_cyrl" }, { where: { chatId } });
+        await changeLanguage("uz_cyrl");
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
             message_id: messageId,
           });
         } catch (e) {}
-
-        await sendTranslatedMessage(chatId, 'language_changed');
+        await sendTranslatedMessage(chatId, "language_changed");
         await homeMenu(chatId);
         res.sendStatus(200);
         return;
-      } else if (data === "lang_ru") { // Rus tili uchun yangi qism
-        console.log(' Changing language to Russian');
-        
-        // Update user's language preference
-        const updateResult = await models.User.update(
-          { language: 'ru' },
-          { where: { chatId } }
-        );
-        console.log('Database update result:', updateResult);
-        
-        // Change i18next language
-        const changeResult = await changeLanguage('ru');
-        console.log('Language change result:', changeResult);
-        
+      } else if (data === "lang_ru") {
+        await models.User.update({ language: "ru" }, { where: { chatId } });
+        await changeLanguage("ru");
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
             message_id: messageId,
           });
         } catch (e) {}
-
-        // Send language changed confirmation and show home menu
-        await sendTranslatedMessage(chatId, 'language_changed');
+        await sendTranslatedMessage(chatId, "language_changed");
         await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "name_confirm_yes" || data === "name_confirm_no") {
         const state = userStateById.get(chatId) || {};
-        // Delete the confirmation message if possible
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -905,284 +911,335 @@ async function handleUpdate(req, res) {
         } catch (e) {}
 
         if (data === "name_confirm_yes") {
-          if (state.expected === "name_confirm" && state.userData?.firstName && state.userData?.lastName) {
-            const fullName = `${state.userData.firstName} ${state.userData.lastName}`.trim();
+          if (state.expected === "name_confirm" && state.userData?.fullName) {
             try {
-              await models.User.update(
-                { fullName },
-                { where: { chatId } }
-              );
-              await sendTranslatedMessage(chatId, 'name_saved', {}, { fullName });
+              await models.User.update({ fullName: state.userData.fullName }, { where: { chatId } });
+              await sendTranslatedMessage(chatId, "name_saved", {}, { fullName: state.userData.fullName });
             } catch (e) {
-              await sendTranslatedMessage(chatId, 'name_save_error');
+              await sendTranslatedMessage(chatId, "name_save_error");
             }
             state.expected = "phone";
             userStateById.set(chatId, state);
             await askPhone(chatId);
           }
         } else {
-          // Ask for first name again
-          state.expected = "first_name";
+          state.expected = "full_name";
           userStateById.set(chatId, state);
-          await sendTranslatedMessage(chatId, 'ask_first_name_again');
+          await sendTranslatedMessage(chatId, "ask_full_name");
         }
         res.sendStatus(200);
         return;
       } else if (data === "order_confirm_yes") {
         try {
-          try {
-            await telegram.post("/deleteMessage", {
-              chat_id: chatId,
-              message_id: messageId,
-            });
-          } catch (_) {}
-
-          const keyboardText = await getTranslatedKeyboard(chatId);
-          await sendMessage(chatId, await translate(chatId, 'order_received'), {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-              ],
-              resize_keyboard: false,
-            },
-          });
-        } catch (e) {
-          console.error("Fallback accept handler error:", e.message || e);
-        }
-        res.sendStatus(200);
-        return;
-      } else if (data.startsWith("order_confirm_yes:")) {
-        const parts = data.split(":");
-        const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
-        const rawOrderId = parts[2] || null;
-        let resolvedOrderNumber =
-          rawOrderId && /^\d+$/.test(rawOrderId)
-            ? parseInt(rawOrderId, 10)
-            : null;
-        const confirmationMessageId = cq.message.message_id;
-
-        // Delete the order confirmation message
-        try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
-            message_id: confirmationMessageId,
+            message_id: messageId,
           });
-        } catch (e) {
-          console.error("Failed to delete order confirmation message:", e.message || e);
-        }
+        } catch (_) {}
 
-        // Send new message instead of editing
         const keyboardText = await getTranslatedKeyboard(chatId);
-        await sendMessage(chatId, await translate(chatId, 'order_received'), {
+        await sendMessage(chatId, await translate(chatId, "order_received"), {
           parse_mode: "HTML",
           reply_markup: {
-            inline_keyboard: [
-              [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-            ],
+            inline_keyboard: [[{ text: keyboardText.my_orders, callback_data: "my_orders" }]],
             resize_keyboard: false,
           },
         });
+        res.sendStatus(200);
+        return;
+} else if (data.startsWith("order_confirm_yes:")) {
+  const parts = data.split(":");
+  const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
+  const rawOrderId = parts[2] || null;
+  let resolvedOrderNumber = rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
 
-        // Get order details from message text
-        const messageText = cq.message?.text || "";
-        let productName = "Sut";
-        let liters = null;
-        let latitude = null;
-        let longitude = null;
+  try {
+    await telegram.post("/deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  } catch (e) {
+    console.error("Failed to delete order confirmation message:", e.message || e);
+  }
 
-        // Parse product name and liters from message
-        const productMatch = messageText.match(/ Mahsulot: (.+)/);
-        if (productMatch) {
-          productName = productMatch[1].trim();
-        }
-        const qtyMatch = messageText.match(/ Miqdor: ([\d.]+)L/);
-        if (qtyMatch) {
-          liters = parseFloat(qtyMatch[1]);
-        }
+  const keyboardText = await getTranslatedKeyboard(chatId);
+  await sendMessage(chatId, await translate(chatId, "order_received"), {
+    parse_mode: "HTML",
+    reply_markup: {
+      inline_keyboard: [[{ text: keyboardText.my_orders, callback_data: "my_orders" }]],
+      resize_keyboard: false,
+    },
+  });
 
-        // Fallback: if orderId is missing/invalid, pick the most recent pending order
-        let orderDetails = null;
-        if (
-          customerChatId &&
-          (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
-        ) {
-          const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
-          const list = Array.isArray(ordersResp)
-            ? ordersResp
-            : ordersResp?.orders || ordersResp?.data || [];
-          if (Array.isArray(list) && list.length > 0) {
-            const pendingSortedDesc = list
-              .filter((o) => (o.status || "").toLowerCase() === "pending")
-              .sort((a, b) => (b.id || 0) - (a.id || 0));
-            if (pendingSortedDesc.length > 0) {
-              resolvedOrderNumber = pendingSortedDesc[0].id;
-              orderDetails = pendingSortedDesc[0];
-            }
-          }
-        }
+  const messageText = cq.message?.text || "";
+  let productName = "Sut";
+  let liters = null;
+  let latitude = null;
+  let longitude = null;
 
-        // Get customer information
-        let customer = null;
-        if (customerChatId) {
-          const customerUser = await models.User.findOne({
-            where: { chatId: customerChatId },
-          });
-          if (customerUser) {
-            customer = {
-              chatId: customerChatId,
-              telegramId: customerUser.telegramId,
-              id: customerUser.id,
-              fullName: customerUser.fullName,
-              username: customerUser.username,
-              phone: customerUser.phone,
-              latitude: customerUser.latitude,
-              longitude: customerUser.longitude,
-            };
-            // Use customer coordinates if available
-            if (customerUser.latitude && customerUser.longitude) {
-              latitude = customerUser.latitude;
-              longitude = customerUser.longitude;
-            }
-          }
-        }
+  const productMatch = messageText.match(/ Mahsulot: (.+)/);
+  if (productMatch) {
+    productName = productMatch[1].trim();
+  }
+  const qtyMatch = messageText.match(/ Miqdor: ([\d.]+)L/);
+  if (qtyMatch) {
+    liters = parseFloat(qtyMatch[1]);
+  }
 
-        // If order details from API, use those coordinates
-        if (orderDetails) {
-          if (orderDetails.latitude && orderDetails.longitude) {
-            latitude = orderDetails.latitude;
-            longitude = orderDetails.longitude;
-          }
-          if (orderDetails.product?.name) {
-            productName = orderDetails.product.name;
-          }
-          if (orderDetails.product?.items?.[0]?.quantity) {
-            liters = Number(orderDetails.product.items[0].quantity);
-          }
-        }
+  // Foydalanuvchi ma'lumotlarini olish
+  let customer = null;
+  let customerUserId = null;
+  let customerPhone = null;
+  if (customerChatId) {
+    const customerUser = await models.User.findOne({
+      where: { chatId: customerChatId },
+    });
+    if (customerUser) {
+      customer = {
+        chatId: customerChatId,
+        telegramId: customerUser.telegramId,
+        id: customerUser.id,
+        fullName: customerUser.fullName,
+        username: customerUser.username,
+        phone: customerUser.phone,
+        latitude: customerUser.latitude,
+        longitude: customerUser.longitude,
+      };
+      customerUserId = customerUser.id; // ← Lokal bazadagi ID (1)
+      customerPhone = customerUser.phone; // ← Telefon raqam (+998905253101)
+      
+      if (customerUser.latitude && customerUser.longitude) {
+        latitude = customerUser.latitude;
+        longitude = customerUser.longitude;
+      }
+    }
+  }
 
-        const normalizedOrderId =
-          rawOrderId ||
-          (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
-            ? String(resolvedOrderNumber)
-            : null);
-
-        // Check if order already exists in CourierOrder
-        const existingOrder =
-          normalizedOrderId && customerChatId
-            ? await models.CourierOrder.findOne({
-                where: {
-                  courierChatId: chatId,
-                  orderId: normalizedOrderId,
-                  customerChatId: customerChatId,
-                },
-              })
-            : null;
-
-        if (!existingOrder && customer) {
-          // Create new CourierOrder record ONLY if it doesn't exist
-          try {
-            await createCourierOrderRecord({
-              courierChatId: chatId,
-              customer,
-              order: orderDetails || {
-                id: normalizedOrderId,
-                status: "processing",
-              },
-              productName,
-              liters,
-              address: null, // Will be resolved by createCourierOrderRecord
-            });
-          } catch (error) {
-            console.error(
-              "Failed to create courier order record:",
-              error.message || error
-            );
-          }
-        } else if (existingOrder) {
-          // Update existing order status
-          await updateCourierOrderStatusLocal({
-            courierChatId: chatId,
-            customerChatId,
-            orderId: normalizedOrderId,
-            status: "processing",
-          });
-        }
-
-        // Accept -> set processing in external API (only if numeric order id available)
-        const numericResolvedOrderId =
-          toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
-        if (customerChatId && numericResolvedOrderId !== null) {
-          try {
-            await updateOrderStatus(
-              customerChatId,
-              numericResolvedOrderId,
-              "processing"
-            );
-          } catch (_) {}
-        }
-
-        if (normalizedOrderId) {
-          markOrderAccepted(normalizedOrderId, chatId);
-        }
-      } else if (data === "order_confirm_no") {
-        try {
-          try {
-            await telegram.post("/deleteMessage", {
-              chat_id: chatId,
-              message_id: messageId,
-            });
-          } catch (_) {}
-
-          await sendMessage(chatId, await translate(chatId, 'order_cancelled'), {
-            parse_mode: "HTML",
-          });
-        } catch (e) {
-          console.error("Fallback cancel handler error:", e.message || e);
-        }
+  // API dan buyurtmalarni olish - avval telefon raqam orqali
+  let orderDetails = null;
+  if (customerPhone && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
+    console.log("Fetching orders for phone:", customerPhone);
+    const ordersResp = await getUserOrdersWithRetry(customerPhone, 2);
+    console.log("Orders response from API:", ordersResp);
+    
+    if (ordersResp && ordersResp.success !== false) {
+      const list = Array.isArray(ordersResp) 
+        ? ordersResp 
+        : ordersResp?.orders || ordersResp?.data || [];
+      
+      if (Array.isArray(list) && list.length > 0) {
+        // "pending" statusdagi buyurtmalarni topish
+        const pendingOrders = list
+          .filter((o) => (o.status || "").toLowerCase() === "pending");
         
+        console.log("Pending orders found:", pendingOrders.length);
+        
+        if (pendingOrders.length > 0) {
+          // Eng oxirgi (eng katta ID li) buyurtmani olish
+          pendingOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
+          resolvedOrderNumber = pendingOrders[0].id;
+          orderDetails = pendingOrders[0];
+          console.log("Found latest pending order from API:", orderDetails);
+        }
+      }
+    }
+  }
+
+  // Agar telefon raqam orqali topilmasa, userId orqali urinib ko'ramiz
+  if (!orderDetails && customerUserId && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
+    console.log("Trying to fetch orders by userId:", customerUserId);
+    const ordersResp = await getUserOrdersWithRetry(customerUserId, 1); // Faqat 1 marta urinish
+    console.log("Orders response from API by userId:", ordersResp);
+    
+    if (ordersResp && ordersResp.success !== false) {
+      const list = Array.isArray(ordersResp) 
+        ? ordersResp 
+        : ordersResp?.orders || ordersResp?.data || [];
+      
+      if (Array.isArray(list) && list.length > 0) {
+        const pendingOrders = list
+          .filter((o) => (o.status || "").toLowerCase() === "pending");
+        
+        if (pendingOrders.length > 0) {
+          pendingOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
+          resolvedOrderNumber = pendingOrders[0].id;
+          orderDetails = pendingOrders[0];
+          console.log("Found order from API by userId:", orderDetails);
+        }
+      }
+    }
+  }
+
+  if (orderDetails) {
+    if (orderDetails.latitude && orderDetails.longitude) {
+      latitude = orderDetails.latitude;
+      longitude = orderDetails.longitude;
+    }
+    if (orderDetails.product?.name) {
+      productName = orderDetails.product.name;
+    }
+    if (orderDetails.product?.items?.[0]?.quantity) {
+      liters = Number(orderDetails.product.items[0].quantity);
+    }
+  }
+
+  const normalizedOrderId =
+    rawOrderId ||
+    (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
+      ? String(resolvedOrderNumber)
+      : null);
+
+  // DEBUG: Barcha ma'lumotlarni chiqaramiz
+  console.log("DEBUG - All collected data:", {
+    customerChatId,
+    customerUserId,
+    customerPhone,
+    resolvedOrderNumber,
+    normalizedOrderId,
+    orderDetails
+  });
+
+  const existingOrder =
+    normalizedOrderId && customerChatId
+      ? await models.CourierOrder.findOne({
+          where: {
+            courierChatId: chatId,
+            orderId: normalizedOrderId,
+            customerChatId: customerChatId,
+          },
+        })
+      : null;
+
+  if (!existingOrder && customer) {
+    try {
+      await createCourierOrderRecord({
+        courierChatId: chatId,
+        customer,
+        order: orderDetails || {
+          id: normalizedOrderId,
+          status: "processing",
+        },
+        productName,
+        liters,
+        address: null,
+      });
+      console.log("Courier order record created successfully");
+    } catch (error) {
+      console.error("Failed to create courier order record:", error.message || error);
+    }
+  } else if (existingOrder) {
+    await updateCourierOrderStatusLocal({
+      courierChatId: chatId,
+      customerChatId,
+      orderId: normalizedOrderId,
+      status: "processing",
+    });
+    console.log("Existing courier order updated");
+  }
+
+  // External API ga yangilash - avval telefon raqam orqali
+  const numericResolvedOrderId = toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
+  
+  console.log("DEBUG - IDs for API update:", {
+    customerUserId,
+    customerPhone,
+    numericResolvedOrderId,
+    resolvedOrderNumber,
+    normalizedOrderId
+  });
+  
+  if (customerPhone && numericResolvedOrderId !== null) {
+    try {
+      console.log(`Updating order status via API with phone: ${customerPhone}, orderId: ${numericResolvedOrderId}`);
+      // updateOrderStatus funksiyasi telefon raqamni qabul qilishi kerak
+      await updateOrderStatus(customerPhone, numericResolvedOrderId, "processing");
+      console.log("Order status updated successfully in external API");
+    } catch (error) {
+      console.error("Failed to update order status in API with phone:", error.message || error);
+      
+      // Agar telefon raqam bilan xatolik bo'lsa, userId bilan urinib ko'ramiz
+      if (customerUserId) {
+        try {
+          console.log(`Trying with userId: ${customerUserId}, orderId: ${numericResolvedOrderId}`);
+          await updateOrderStatus(customerUserId, numericResolvedOrderId, "processing");
+          console.log("Order status updated with userId");
+        } catch (userIdError) {
+          console.error("Failed to update order status with userId too:", userIdError.message || userIdError);
+        }
+      }
+    }
+  } else {
+    console.warn("Cannot update order status - missing customerPhone or orderId:", {
+      customerPhone,
+      numericResolvedOrderId
+    });
+  }
+
+  if (normalizedOrderId) {
+    markOrderAccepted(normalizedOrderId, chatId);
+  }
+
+  res.sendStatus(200);
+  return;
+} else if (data === "order_confirm_no") {
+        try {
+          await telegram.post("/deleteMessage", {
+            chat_id: chatId,
+            message_id: messageId,
+          });
+        } catch (_) {}
+
+        await sendMessage(chatId, await translate(chatId, "order_cancelled"), {
+          parse_mode: "HTML",
+        });
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("order_confirm_no:")) {
         const parts = data.split(":");
         const customerChatId = parts[1] ? parseInt(parts[1], 10) : null;
         const rawOrderId = parts[2] || null;
-        let resolvedOrderNumber =
-          rawOrderId && /^\d+$/.test(rawOrderId)
-            ? parseInt(rawOrderId, 10)
-            : null;
-        const confirmationMessageId = cq.message.message_id;
-        
-        // Delete the order confirmation message
+        let resolvedOrderNumber = rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
+
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
-            message_id: confirmationMessageId,
+            message_id: messageId,
           });
         } catch (e) {
           console.error("Failed to delete order confirmation message:", e.message || e);
         }
-        
-        // Send new message instead of editing
-        await sendMessage(chatId, await translate(chatId, 'order_cancelled'), {
+
+        await sendMessage(chatId, await translate(chatId, "order_cancelled"), {
           parse_mode: "HTML",
         });
-        
-        if (
-          customerChatId &&
-          (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))
-        ) {
-          const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
-          const list = Array.isArray(ordersResp)
-            ? ordersResp
-            : ordersResp?.orders || ordersResp?.data || [];
-          if (Array.isArray(list) && list.length > 0) {
-            const pendingSortedDesc = list
-              .filter((o) => (o.status || "").toLowerCase() === "pending")
-              .sort((a, b) => (b.id || 0) - (a.id || 0));
-            if (pendingSortedDesc.length > 0) {
-              resolvedOrderNumber = pendingSortedDesc[0].id;
+
+        // Get customer phone for API calls
+        let customerPhone = null;
+        if (customerChatId) {
+          customerPhone = await getCustomerPhoneForApi(customerChatId);
+          console.log("Customer phone for cancellation:", customerPhone);
+          
+          if (customerPhone && (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber))) {
+            const ordersResp = await getUserOrdersWithRetry(customerPhone, 2);
+            console.log("Orders response for cancellation:", ordersResp);
+            
+            if (ordersResp && ordersResp.success !== false) {
+              const list = Array.isArray(ordersResp) 
+                ? ordersResp 
+                : ordersResp?.orders || ordersResp?.data || [];
+              
+              if (Array.isArray(list) && list.length > 0) {
+                const pendingSortedDesc = list
+                  .filter((o) => (o.status || "").toLowerCase() === "pending")
+                  .sort((a, b) => (b.id || 0) - (a.id || 0));
+                if (pendingSortedDesc.length > 0) {
+                  resolvedOrderNumber = pendingSortedDesc[0].id;
+                }
+              }
             }
           }
         }
+
         const normalizedOrderId =
           rawOrderId ||
           (resolvedOrderNumber !== null && !Number.isNaN(resolvedOrderNumber)
@@ -1196,75 +1253,63 @@ async function handleUpdate(req, res) {
           status: "cancelled",
         });
 
-        let reassigned = false;
-        if (normalizedOrderId) {
-          const nextCourier = getNextCourierForOrder(normalizedOrderId, chatId);
-          const nextCourierChatId = nextCourier?.candidate?.courier?.chatId;
-          if (nextCourier && nextCourierChatId) {
-            try {
-              const nextContext = nextCourier.context || {};
-              const targetCustomer = nextContext.customer || {};
-              const nextCustomerChatId =
-                targetCustomer.chatId ||
-                targetCustomer.telegramId ||
-                targetCustomer.id ||
-                customerChatId;
-              await notifySellerAboutOrder({
-                sellerChatId: nextCourierChatId,
-                customerChatId: nextCustomerChatId,
-                orderId: normalizedOrderId,
-                productName: nextContext.productName || "Sut",
-                liters: nextContext.liters,
-                latitude: targetCustomer.latitude,
-                longitude: targetCustomer.longitude,
-              });
+        // Extract productName and liters from message text for reassignment
+        const messageText = cq.message?.text || "";
+        let productName = "Sut";
+        let liters = null;
+        
+        const productMatch = messageText.match(/ Mahsulot: (.+)/);
+        if (productMatch) {
+          productName = productMatch[1].trim();
+        }
+        const qtyMatch = messageText.match(/ Miqdor: ([\d.]+)L/);
+        if (qtyMatch) {
+          liters = parseFloat(qtyMatch[1]);
+        }
 
-              await createCourierOrderRecord({
-                courierChatId: nextCourierChatId,
-                customer: targetCustomer,
-                order: nextContext.order,
+        let reassigned = false;
+        if (normalizedOrderId && customerChatId) {
+          try {
+            const nextCourier = await getNextCourierForOrder(normalizedOrderId);
+            if (nextCourier && nextCourier.chatId) {
+              const nextContext = {
+                customerChatId: customerChatId,
+                productName: productName || "Sut",
+                liters: liters,
+                customerAddress: null,
+              };
+              await notifySellerAboutOrder({
+                sellerChatId: nextCourier.chatId,
+                customerChatId: nextCourier.customerChatId || customerChatId,
+                orderId: normalizedOrderId,
                 productName: nextContext.productName,
                 liters: nextContext.liters,
                 address: nextContext.customerAddress,
               });
-
               reassigned = true;
-            } catch (err) {
-              console.error(
-                "Failed to forward order to next courier:",
-                err.message || err
-              );
             }
+          } catch (err) {
+            console.error("Failed to forward order to next courier:", err.message || err);
           }
         }
 
         if (!reassigned) {
-          if (
-            customerChatId &&
-            resolvedOrderNumber &&
-            !Number.isNaN(resolvedOrderNumber)
-          ) {
+          if (customerPhone && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
             try {
-              await updateOrderStatus(
-                customerChatId,
-                resolvedOrderNumber,
-                "cancelled"
-              );
+              await updateOrderStatus(customerPhone, resolvedOrderNumber, "cancelled");
             } catch (e) {
-              await sendTranslatedMessage(chatId, 'status_update_error', {}, {
-                userId: customerChatId,
-                orderId: resolvedOrderNumber,
-                status: 'cancelled'
-              });
+              console.error("Failed to update order status to cancelled:", e.message || e);
             }
-          } 
+          }
 
           if (normalizedOrderId) {
             clearOrderAssignment(normalizedOrderId);
           }
         }
+
+        res.sendStatus(200);
+        return;
       } else if (data === "confirm_yes") {
-        // Delete the confirmation message
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -1275,13 +1320,11 @@ async function handleUpdate(req, res) {
         }
 
         userStateById.set(chatId, {});
-        // Registration completed -> notify and show home menu
-        await sendTranslatedMessage(chatId, 'registration_complete');
+        await sendTranslatedMessage(chatId, "registration_complete");
         await homeMenu(chatId);
         res.sendStatus(200);
         return;
       } else if (data === "confirm_no") {
-        // Delete the confirmation message
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -1290,24 +1333,28 @@ async function handleUpdate(req, res) {
         } catch (e) {
           console.error("Failed to delete confirmation message:", e.message || e);
         }
-        // Restart registration from the beginning (ask first name again)
+
         const state = userStateById.get(chatId) || {};
-        state.expected = "first_name";
+        state.expected = "full_name";
         userStateById.set(chatId, state);
-        await sendTranslatedMessage(chatId, 'ask_first_name_again');
-        
+        await sendTranslatedMessage(chatId, "ask_full_name");
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("back_to_home_menu:")) {
-        const messageId = parseInt(data.split(":")[1], 10);
-        await sendHomeMenuWithMessage(chatId, await translate(chatId, 'back_to_home'), {
-          message_id: messageId,
+        const msgId = parseInt(data.split(":")[1], 10);
+        await sendHomeMenuWithMessage(chatId, await translate(chatId, "back_to_home"), {
+          message_id: msgId,
         });
         userStateById.delete(chatId);
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("courier_order_view:")) {
-        // View specific order details
         const parts = data.split(":");
         const orderDbId = parseInt(parts[1], 10);
-        const ordersListMessageId = cq.message.message_id; // Store the list message ID
+        const ordersListMessageId = cq.message.message_id;
         await sendCourierOrderDetails(chatId, orderDbId, ordersListMessageId);
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("order_delivered:")) {
         const parts = data.split(":");
         const orderDbId = parseInt(parts[1], 10);
@@ -1317,69 +1364,49 @@ async function handleUpdate(req, res) {
         try {
           const order = await models.CourierOrder.findByPk(orderDbId);
           if (order) {
-            const plainOrder =
-              typeof order.get === "function"
-                ? order.get({ plain: true })
-                : order;
+            const plainOrder = typeof order.get === "function" ? order.get({ plain: true }) : order;
 
-            console.log("Processing order delivery for orderDbId:", orderDbId);
-            console.log(
-              "Plain order data:",
-              JSON.stringify(plainOrder, null, 2)
-            );
+            let externalOrderId = plainOrder.orderId || plainOrder.externalOrderId || null;
 
-            // GET THE ACTUAL ORDER ID
-            let externalOrderId =
-              plainOrder.orderId || plainOrder.externalOrderId || null;
+            // Get customer phone for API calls
+            let customerPhone = null;
+            const customerChatId = resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
+            if (customerChatId) {
+              customerPhone = await getCustomerPhoneForApi(customerChatId);
+              console.log("Customer phone for delivery:", customerPhone);
+              
+              // If it's a temporary ID, try to get the real order ID from the API
+              if (externalOrderId && externalOrderId.startsWith("tmp-") && customerPhone) {
+                console.log("Found temporary order ID, fetching real order ID from API...");
 
-            // If it's a temporary ID, try to get the real order ID from the API
-            if (externalOrderId && externalOrderId.startsWith("tmp-")) {
-              console.log(
-                "Found temporary order ID, fetching real order ID from API..."
-              );
-
-              const customerChatId =
-                resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
-              if (customerChatId) {
                 try {
-                  const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
-                  const ordersList = Array.isArray(ordersResp)
-                    ? ordersResp
-                    : ordersResp?.data || [];
+                  const ordersResp = await getUserOrdersWithRetry(customerPhone, 2);
+                  console.log("Orders response for delivery:", ordersResp);
+                  
+                  if (ordersResp && ordersResp.success !== false) {
+                    const ordersList = Array.isArray(ordersResp) 
+                      ? ordersResp 
+                      : ordersResp?.data || [];
 
-                  // Find the most recent processing order for this customer
-                  const processingOrders = ordersList.filter(
-                    (o) => o.status === "processing"
-                  );
-                  if (processingOrders.length > 0) {
-                    processingOrders.sort((a, b) => b.id - a.id);
-                    externalOrderId = String(processingOrders[0].id);
-                    console.log(
-                      "Found real order ID from API:",
-                      externalOrderId
+                    // Find the most recent processing order for this customer
+                    const processingOrders = ordersList.filter(
+                      (o) => o.status === "processing"
                     );
+                    if (processingOrders.length > 0) {
+                      processingOrders.sort((a, b) => b.id - a.id);
+                      externalOrderId = String(processingOrders[0].id);
+                      console.log("Found real order ID from API:", externalOrderId);
+                    }
                   }
                 } catch (apiError) {
-                  console.error(
-                    "Failed to fetch orders from API:",
-                    apiError.message || apiError
-                  );
+                  console.error("Failed to fetch orders from API:", apiError.message || apiError);
                 }
               }
             }
 
-            const externalUserId =
-              resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
             const numericExternalOrderId = toNumericId(externalOrderId);
 
-            console.log(
-              "Final IDs - externalOrderId:",
-              externalOrderId,
-              "numericExternalOrderId:",
-              numericExternalOrderId,
-              "externalUserId:",
-              externalUserId
-            );
+            console.log("Final IDs - externalOrderId:", externalOrderId, "numericExternalOrderId:", numericExternalOrderId, "customerPhone:", customerPhone);
 
             // Update order status to completed in our database
             await models.CourierOrder.update(
@@ -1401,121 +1428,23 @@ async function handleUpdate(req, res) {
               sellerPhone = currentUser?.phone;
               console.log("Seller phone found:", sellerPhone);
             } catch (e) {
-              console.error(
-                "Failed to fetch current user's phone:",
-                e.message || e
-              );
+              console.error("Failed to fetch current user's phone:", e.message || e);
             }
 
-            // Update external API - Order status to completed USING PUT METHOD
-            if (externalUserId && numericExternalOrderId !== null) {
+            // Update external API using phone number as userId
+            if (customerPhone && numericExternalOrderId !== null) {
               try {
-                console.log(
-                  `Making PUT request to: https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/user/${externalUserId}/order/${numericExternalOrderId}`
-                );
-                console.log("Request body:", { status: "completed" });
-
-                const statusResponse = await axios.put(
-                  `https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/user/${externalUserId}/order/${numericExternalOrderId}`,
-                  {
-                    status: "completed",
-                  },
-                  {
-                    headers: {
-                      "Content-Type": "application/json",
-                    },
-                    timeout: 10000,
-                  }
-                );
-                console.log(
-                  " Order status update API response:",
-                  JSON.stringify(statusResponse.data, null, 2)
-                );
-
-                // Check if the update was successful
-                if (
-                  statusResponse.data &&
-                  statusResponse.data.status === "completed"
-                ) {
-                  console.log(
-                    " SUCCESS: Order status changed to completed in API"
-                  );
-                } else {
-                  console.log(
-                    " API response doesn't show completed status:",
-                    statusResponse.data
-                  );
-                }
+                console.log(`Updating order status for phone: ${customerPhone}, order: ${numericExternalOrderId}`);
+                await updateOrderStatus(customerPhone, numericExternalOrderId, "completed", sellerPhone);
+                console.log("Order status updated successfully in external API");
               } catch (e) {
-                console.error(
-                  " Failed to update order status in external API:",
-                  e.message || e
-                );
-                if (e.response) {
-                  console.error("API response error data:", e.response.data);
-                  console.error("API response status:", e.response.status);
-                  console.error("API response headers:", e.response.headers);
-                }
+                console.error("Failed to update order status in external API:", e.message || e);
               }
             } else {
-              console.warn(
-                " Cannot update order status - missing externalUserId or numericExternalOrderId:",
-                {
-                  externalUserId: externalUserId,
-                  numericExternalOrderId: numericExternalOrderId,
-                }
-              );
-            }
-
-            // Send seller info USING POST METHOD
-            if (numericExternalOrderId !== null && sellerPhone) {
-              const apiPhone = formatPhoneNumberForApi(sellerPhone) || sellerPhone;
-              try {
-                console.log(
-                  `Making POST request to seller info endpoint for order: ${numericExternalOrderId}`
-                );
-                console.log("Seller info request body:", {
-                  orderId: numericExternalOrderId,
-                  phoneNumber: apiPhone,
-                });
-
-                const sellerResponse = await axios.post(
-                  "https://zymogenic-edmond-lamellately.ngrok-free.dev/api/status/seller/info/",
-                  {
-                    orderId: numericExternalOrderId,
-                    phoneNumber: apiPhone,
-                  },
-                  {
-                    headers: {
-                      "Content-Type": "application/json",
-                    },
-                    timeout: 10000,
-                  }
-                );
-                console.log(
-                  " Seller info sent successfully:",
-                  sellerResponse.data
-                );
-              } catch (apiError) {
-                console.error(
-                  " Failed to send seller info to API:",
-                  apiError.message || apiError
-                );
-                if (apiError.response) {
-                  console.error(
-                    "Seller API response error:",
-                    apiError.response.data
-                  );
-                }
-              }
-            } else {
-              console.warn(
-                " Cannot send seller info - missing orderId or phone:",
-                {
-                  orderId: numericExternalOrderId,
-                  sellerPhone: sellerPhone,
-                }
-              );
+              console.warn("Cannot update order status - missing customerPhone or numericExternalOrderId:", {
+                customerPhone: customerPhone,
+                numericExternalOrderId: numericExternalOrderId,
+              });
             }
 
             // Clear assignment
@@ -1536,33 +1465,28 @@ async function handleUpdate(req, res) {
             // Remove this message ID from state
             const state = userStateById.get(chatId) || {};
             if (state.orderMessages) {
-              state.orderMessages = state.orderMessages.filter(id => id !== messageId);
+              state.orderMessages = state.orderMessages.filter((id) => id !== messageId);
               userStateById.set(chatId, state);
             }
 
             await telegram.post("/answerCallbackQuery", {
               callback_query_id: cq.id,
-              text: await translate(chatId, 'order_delivered'),
+              text: await translate(chatId, "order_delivered"),
             });
           }
         } catch (error) {
-          console.error(
-            "Failed to update order status:",
-            error.message || error
-          );
+          console.error("Failed to update order status:", error.message || error);
           await telegram.post("/answerCallbackQuery", {
             callback_query_id: cq.id,
-            text: await translate(chatId, 'error'),
+            text: await translate(chatId, "error"),
           });
         }
 
-        if (res) res.sendStatus(200);
+        res.sendStatus(200);
         return;
       } else if (data.startsWith("order_not_delivered:")) {
-        // Courier reported "No" - keep status and send a reminder
         const messageId = cq.message.message_id;
-        
-        // Delete the current message
+
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -1572,28 +1496,26 @@ async function handleUpdate(req, res) {
           console.log("Could not delete message:", e.message || e);
         }
 
-        // Remove this message ID from state
         const state = userStateById.get(chatId) || {};
         if (state.orderMessages) {
-          state.orderMessages = state.orderMessages.filter(id => id !== messageId);
+          state.orderMessages = state.orderMessages.filter((id) => id !== messageId);
           userStateById.set(chatId, state);
         }
 
-        await sendTranslatedMessage(chatId, 'order_not_delivered');
+        await sendTranslatedMessage(chatId, "order_not_delivered");
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("courier_orders_page:")) {
-        // Pagination - change page in orders list (edit existing message)
         const page = parseInt(data.split(":")[1], 10) || 1;
         const messageId = cq.message.message_id;
-        // Store messageId in state for future use
         const state = userStateById.get(chatId) || {};
         state.ordersListMessageId = messageId;
         userStateById.set(chatId, state);
-        await sendCourierOrdersList(chatId, page, messageId);
+        await sendCourierOrdersList(chatId);
+        res.sendStatus(200);
+        return;
       } else if (data.startsWith("courier_orders_back:")) {
-        // Back - delete detail message only
         const detailMessageId = cq.message.message_id;
-
-        // Delete the detail message
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -1602,8 +1524,9 @@ async function handleUpdate(req, res) {
         } catch (e) {
           console.error("Failed to delete detail message:", e.message || e);
         }
+        res.sendStatus(200);
+        return;
       } else if (data === "courier_detail_close") {
-        // Delete the currently opened detail message
         const detailMessageId = cq.message.message_id;
         try {
           await telegram.post("/deleteMessage", {
@@ -1613,8 +1536,9 @@ async function handleUpdate(req, res) {
         } catch (e) {
           console.error("Failed to delete detail message:", e.message || e);
         }
+        res.sendStatus(200);
+        return;
       } else if (data === "courier_orders_close") {
-        // Close the orders list message and clear state
         const listMessageId = cq.message.message_id;
         try {
           await telegram.post("/deleteMessage", {
@@ -1622,16 +1546,15 @@ async function handleUpdate(req, res) {
             message_id: listMessageId,
           });
         } catch (e) {
-          console.error(
-            "Failed to delete orders list message:",
-            e.message || e
-          );
+          console.error("Failed to delete orders list message:", e.message || e);
         }
         const st = userStateById.get(chatId) || {};
         if (st.ordersListMessageId) {
           delete st.ordersListMessageId;
           userStateById.set(chatId, st);
         }
+        res.sendStatus(200);
+        return;
       }
 
       res.sendStatus(200);
@@ -1643,26 +1566,15 @@ async function handleUpdate(req, res) {
       const chatId = message.chat.id;
       const text = typeof message.text === "string" ? message.text.trim() : "";
 
-      // Keep the old text commands for backward compatibility
-      if (
-        text === "/orders" ||
-        text === "Buyurtmalarim " ||
-        text === "Buyurtmalarim" ||
-        text === "Buyurtmalarim"
-      ) {
-        // Delete previous order messages before sending new ones
+      if (text === "/orders" || text === "Buyurtmalarim" || text.includes("Buyurtmalarim")) {
         await deletePreviousOrderMessages(chatId);
         await sendCourierOrdersList(chatId);
         res.sendStatus(200);
         return;
       }
-      if (
-        text === "/language" ||
-        text === "Tilni o'zgartirish " ||
-        text === "Tilni o'zgartirish" ||
-        text === " Tilni o'zgartirish"
-      ) {
-        await sendTranslatedMessage(chatId, 'select_language', {
+
+      if (text === "/language" || text.includes("Tilni o'zgartirish")) {
+        await sendTranslatedMessage(chatId, "select_language", {
           reply_markup: {
             inline_keyboard: [
               [
@@ -1680,38 +1592,10 @@ async function handleUpdate(req, res) {
             ],
           },
         });
-      } 
-
-      let responseJson = null
-
-      if (text === " O'zbek (Lotin)") {
-        responseJson = {
-        chatId,
-        language: "uz",
-        message: await translate(chatId, 'language_changed')
-        };
-        } else if (text === " Ўзбек (Кирилл)") {
-        responseJson = {
-        chatId,
-        language: "uz_cyrl",
-        message: await translate(chatId, 'language_changed')
-        };
-        }
-        
-        if (responseJson) {
-        console.log(responseJson); 
-        // Update user's language preference
-        await models.User.update(
-          { language: responseJson.language },
-          { where: { chatId } }
-        );
-        await changeLanguage(responseJson.language);
-        await sendMessage(chatId, responseJson.message, { sendHomeMenuWithMessage });
         res.sendStatus(200);
         return;
-        }
+      }
 
-      // Remove manual text location entry handling to simplify flow
       const state = userStateById.get(chatId) || {};
 
       if (message.location && typeof message.location.latitude === "number") {
@@ -1722,7 +1606,7 @@ async function handleUpdate(req, res) {
         };
         st.expected = null;
         userStateById.set(chatId, st);
-        
+
         try {
           await models.User.update(
             {
@@ -1742,34 +1626,25 @@ async function handleUpdate(req, res) {
         const phone = user?.phone || "—";
         let address = "—";
         if (user?.latitude && user?.longitude) {
-          const detailed = await reverseGeocodeDetailed(
-            user.latitude,
-            user.longitude
-          );
-          const formatted =
-            detailed && detailed.address
-              ? formatUzAddress(detailed.address)
-              : null;
+          const detailed = await reverseGeocodeDetailed(user.latitude, user.longitude);
+          const formatted = detailed && detailed.address ? formatUzAddress(detailed.address) : null;
           if (formatted) {
             address = formatted;
           } else {
-            const fallback = await reverseGeocode(
-              user.latitude,
-              user.longitude
-            );
+            const fallback = await reverseGeocode(user.latitude, user.longitude);
             address = fallback || `${user.latitude}, ${user.longitude}`;
           }
         }
 
         await sendTranslatedMessage(
           chatId,
-          'user_info',
+          "user_info",
           {
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: await translate(chatId, 'yes'), callback_data: "confirm_yes" },
-                  { text: await translate(chatId, 'no'), callback_data: "confirm_no" },
+                  { text: await translate(chatId, "yes"), callback_data: "confirm_yes" },
+                  { text: await translate(chatId, "no"), callback_data: "confirm_no" },
                 ],
               ],
             },
@@ -1778,254 +1653,186 @@ async function handleUpdate(req, res) {
             username: uname,
             fullName: fullName,
             phone: phone,
-            address: address
+            address: address,
           }
         );
         res.sendStatus(200);
         return;
       }
 
-      // Handle phone number input as text
-      if (state.expected === "phone" && text) {
-        let phone = text.trim();
-        
-        // Format phone number
-        const formattedPhone = formatPhoneNumber(phone);
-        
-        if (!formattedPhone) {
-          await sendTranslatedMessage(chatId, 'share_phone_correctly');
-          res.sendStatus(200);
-          return;
-        }
-
-        state.expected = "location";
-        userStateById.set(chatId, state);
-
-        try {
-          await models.User.update(
-            { phone: formattedPhone },
-            { where: { chatId } }
-          );
-          await sendTranslatedMessage(chatId, 'phone_saved', {}, { phone: formattedPhone });
-          await askLocation(chatId);
-        } catch (e) {
-          console.error("Failed to save phone:", e);
-          await sendTranslatedMessage(chatId, 'phone_save_error');
-        }
-        res.sendStatus(200);
-        return;
-      }
-
-      // Handle first name input
-      if (state.expected === "first_name" && text) {
-        const firstName = text.trim();
-        // Disallow commands like /start being captured as name
-        if (firstName.startsWith('/')) {
-          await sendTranslatedMessage(chatId, 'enter_valid_first_name');
-          res.sendStatus(200);
-          return;
-        }
+      if (state.expected === "full_name" && text) {
         state.userData = state.userData || {};
-        state.userData.firstName = firstName;
-        state.expected = "last_name";
-        userStateById.set(chatId, state);
-        
-        await sendTranslatedMessage(chatId, 'ask_last_name');
-        res.sendStatus(200);
-        return;
-      }
-
-      // Handle last name input
-      if (state.expected === "last_name" && text) {
-        const lastName = text.trim();
-        // Disallow commands like /start being captured as surname
-        if (lastName.startsWith('/')) {
-          await sendTranslatedMessage(chatId, 'enter_valid_last_name');
-          res.sendStatus(200);
-          return;
-        }
-        state.userData.lastName = lastName;
+        state.userData.fullName = text.trim();
         state.expected = "name_confirm";
         userStateById.set(chatId, state);
-        
-        // Ask for confirmation before saving
-        const keyboardText = await getTranslatedKeyboard(chatId);
+
         await sendTranslatedMessage(
           chatId,
-          'confirm_name',
+          "confirm_name",
           {
             reply_markup: {
-              inline_keyboard: [[
-                { text: keyboardText.yes, callback_data: 'name_confirm_yes' },
-                { text: keyboardText.no, callback_data: 'name_confirm_no' }
-              ]]
-            }
+              inline_keyboard: [
+                [{ text: await translate(chatId, "yes"), callback_data: "name_confirm_yes" }],
+                [{ text: await translate(chatId, "no"), callback_data: "name_confirm_no" }],
+              ],
+            },
           },
-          { firstName: state.userData.firstName, lastName: state.userData.lastName }
+          { fullName: state.userData.fullName }
         );
         res.sendStatus(200);
         return;
       }
 
-      // Handle name confirmation
-      if (state.expected === "name_confirm" && callbackQueryData === "name_confirm_yes") {
-        const fullName = `${state.userData.firstName} ${state.userData.lastName}`.trim();
+      if (state.expected === "name_confirm" && text === "Ha") {
         try {
-          await models.User.update(
-            { fullName },
-            { where: { chatId } }
-          );
-          await sendTranslatedMessage(chatId, 'name_saved', {}, { fullName: fullName });
+          await models.User.update({ fullName: state.userData.fullName }, { where: { chatId } });
+          await sendTranslatedMessage(chatId, "name_saved", {}, { fullName: state.userData.fullName });
           state.expected = "phone";
           userStateById.set(chatId, state);
           await askPhone(chatId);
         } catch (e) {
           console.error("Failed to save user name:", e);
-          await sendTranslatedMessage(chatId, 'name_save_error');
+          await sendTranslatedMessage(chatId, "name_save_error");
         }
         res.sendStatus(200);
         return;
       }
 
-      // Handle name confirmation
-      if (state.expected === "name_confirm" && callbackQueryData === "name_confirm_no") {
-        state.expected = "first_name";
+      if (state.expected === "name_confirm" && text === "Yo'q") {
+        state.expected = "full_name";
         userStateById.set(chatId, state);
-        await sendTranslatedMessage(chatId, 'ask_first_name_again');
+        await sendTranslatedMessage(chatId, "ask_full_name");
         res.sendStatus(200);
         return;
       }
 
-      // Handle phone number input via contact
       if (message.contact && message.contact.phone_number && state.expected === "phone") {
         const phone = message.contact.phone_number;
         state.expected = "location";
         userStateById.set(chatId, state);
 
         try {
-          await models.User.update(
-            { phone },
-            { where: { chatId } }
-          );
-          await sendTranslatedMessage(chatId, 'phone_saved', {}, { phone: phone });
+          await models.User.update({ phone }, { where: { chatId } });
+          await sendTranslatedMessage(chatId, "phone_saved", {}, { phone: phone });
           await askLocation(chatId);
         } catch (e) {
           console.error("Failed to save phone:", e);
-          await sendTranslatedMessage(chatId, 'phone_save_error');
+          await sendTranslatedMessage(chatId, "phone_save_error");
         }
         res.sendStatus(200);
         return;
       }
 
-
       if (text === "/start" || text.startsWith("/start")) {
         const from = message.from || {};
         const telegramId = from.id;
         const username = from.username || null;
-      
+
         try {
           const existingUser = await models.User.findOne({
             where: { telegramId },
           });
-      
-          // Check if user has completed all required registration steps
-          const hasCompletedRegistration = existingUser && 
-                                         existingUser.fullName && 
-                                         existingUser.phone && 
-                                         (existingUser.address || (existingUser.latitude && existingUser.longitude));
-      
+
+          const hasCompletedRegistration =
+            existingUser &&
+            existingUser.fullName &&
+            existingUser.phone &&
+            (existingUser.address || (existingUser.latitude && existingUser.longitude));
+
           if (hasCompletedRegistration) {
             const keyboardText = await getTranslatedKeyboard(chatId);
             await sendTranslatedMessage(
               chatId,
-              'login_success',
+              "login_success",
               {
                 reply_markup: {
                   inline_keyboard: [
-                    [{ text: keyboardText.my_orders, callback_data: 'my_orders' }],
-                    [{ text: keyboardText.change_language, callback_data: 'change_language' }]
+                    [{ text: keyboardText.my_orders, callback_data: "my_orders" }],
+                    [{ text: keyboardText.change_language, callback_data: "change_language" }],
                   ],
                   resize_keyboard: false,
-            
                 },
               },
               {
                 telegramId: existingUser.telegramId,
                 phone: existingUser.phone || "—",
-                fullName: existingUser.fullName || "—"
+                fullName: existingUser.fullName || "—",
               }
             );
             res.sendStatus(200);
             return;
           }
-      
-          // If user exists but registration is incomplete, continue from where they left off
+
           if (existingUser) {
             let nextStep = "";
-            
+
             if (!existingUser.fullName) {
-              nextStep = "first_name";
-              userStateById.set(chatId, { 
-                expected: "first_name",
-                userData: { telegramId, chatId, username }
+              nextStep = "full_name";
+              userStateById.set(chatId, {
+                expected: "full_name",
+                userData: { telegramId, chatId, username },
               });
-              await sendTranslatedMessage(chatId, 'continue_registration');
+              await sendTranslatedMessage(chatId, "ask_full_name");
             } else if (!existingUser.phone) {
               nextStep = "phone";
-              userStateById.set(chatId, { 
+              userStateById.set(chatId, {
                 expected: "phone",
-                userData: { telegramId, chatId, username }
+                userData: { telegramId, chatId, username },
               });
               await askPhone(chatId);
             } else if (!existingUser.address && !(existingUser.latitude && existingUser.longitude)) {
               nextStep = "location";
-              userStateById.set(chatId, { 
+              userStateById.set(chatId, {
                 expected: "location",
-                userData: { telegramId, chatId, username }
+                userData: { telegramId, chatId, username },
               });
               await askLocation(chatId);
             }
-      
+
             if (nextStep) {
               res.sendStatus(200);
               return;
             }
           }
-      
-          // If no existing user or something went wrong, create new user
+
           if (!existingUser) {
-            const newUser = await models.User.create({
+            await models.User.create({
               telegramId,
               chatId,
               username,
+              language: "uz",
             });
-      
-            userStateById.set(chatId, { 
-              expected: "first_name",
-              userData: { telegramId, chatId, username }
+
+            userStateById.set(chatId, {
+              expected: "full_name",
+              userData: { telegramId, chatId, username },
             });
           }
-      
-          await sendTranslatedMessage(chatId, 'welcome');
+
+          await sendTranslatedMessage(chatId, "welcome");
+
+          if (!existingUser) {
+            await sendTranslatedMessage(chatId, "ask_full_name");
+          }
+
           res.sendStatus(200);
           return;
-          
         } catch (e) {
           console.error("Sequelize start handler failed:", e.message || e);
-          await sendTranslatedMessage(chatId, 'start_error');
+          await sendTranslatedMessage(chatId, "start_error");
           res.sendStatus(200);
           return;
         }
       }
 
       if (text === "/help") {
-        await sendTranslatedMessage(chatId, 'help');
+        await sendTranslatedMessage(chatId, "help");
         res.sendStatus(200);
         return;
       }
 
       if (text) {
-        await sendTranslatedMessage(chatId, 'unknown_command');
+        await sendTranslatedMessage(chatId, "unknown_command");
         res.sendStatus(200);
         return;
       }
@@ -2043,5 +1850,5 @@ module.exports = {
   handleUpdate,
   sendMessage,
   notifySellerAboutOrder,
-  deletePreviousOrderMessages
+  deletePreviousOrderMessages,
 };

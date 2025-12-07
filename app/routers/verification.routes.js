@@ -106,6 +106,8 @@ router.post("/new-order", async (req, res) => {
       liters,
       latitude: customer.latitude,
       longitude: customer.longitude,
+      customerName: enrichedCustomer.fullName || enrichedCustomer.name || null,
+      phone: enrichedCustomer.phone || null,
     });
 
     async function createCourierOrderRecord({
