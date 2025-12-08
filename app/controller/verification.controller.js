@@ -9,12 +9,15 @@ const db = require("../models");
 const orderAssignments = new Map();
 
 function getOrderIdentifier(order = {}, customer = {}) {
+  // Prefer stable external order identifiers coming from the request payload
+  // instead of database-generated ids that may change.
   const directCandidates = [
-    order?.id,
     order?.orderId,
     order?.externalId,
-    order?.payload?.order?.id,
     order?.payload?.orderId,
+    order?.payload?.order?.orderId,
+    order?.id,
+    order?.payload?.order?.id,
   ];
   for (const candidate of directCandidates) {
     if (candidate !== undefined && candidate !== null && candidate !== "") {

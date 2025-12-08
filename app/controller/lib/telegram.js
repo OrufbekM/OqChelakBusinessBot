@@ -12,6 +12,7 @@ const {
   getNextCourierForOrder,
   clearOrderAssignment,
   markOrderAccepted,
+  getOrderAssignment,
 } = require("../verification.controller");
 const axios = require("axios");
 
@@ -423,9 +424,11 @@ async function sendCourierOrdersList(chatId) {
     await deletePreviousOrderMessages(chatId);
 
     const allOrders = await getCourierOrdersByChatId(chatId);
-    const visibleOrders = (allOrders || []).filter(
-      (o) => (o.status || "").toLowerCase() !== "cancelled"
-    );
+    const visibleOrders = (allOrders || []).filter((o) => {
+      const s = (o.status || "").toLowerCase();
+      return s !== "cancelled" && s !== "completed";
+    });
+    
 
     if (!visibleOrders || visibleOrders.length === 0) {
       const msgId = await sendTranslatedMessage(chatId, "no_orders");
@@ -651,45 +654,31 @@ async function getUserOrdersWithRetry(identifier, retries = 2, delayMs = 800) {
   return null;
 }
 
-// Modified to use phone number as userId
-async function updateOrderStatus(identifier, orderId, status, courierPhone = null) {
+// Modified to always use userId for API calls
+async function updateOrderStatus(userId, orderId, status, courierPhone = null) {
   try {
-    let url;
-    let numericId;
-    
-    // Agar identifier raqam bo'lsa (userId)
-    if (typeof identifier === 'number' || (typeof identifier === 'string' && /^\d+$/.test(identifier))) {
-      numericId = toNumericId(identifier);
-      if (!numericId) {
-        throw new Error(`Invalid userId format: ${identifier}`);
-      }
-      url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(numericId)}/order/${encodeURIComponent(orderId)}`;
+    const numericUserId = toNumericId(userId);
+    if (!numericUserId) {
+      throw new Error(`Invalid userId format: ${userId}`);
     }
-    // Agar identifier telefon raqam bo'lsa
-    else if (typeof identifier === 'string') {
-      const formattedPhone = formatPhoneNumberForApi(identifier);
-      if (!formattedPhone) {
-        throw new Error(`Invalid phone format: ${identifier}`);
-      }
-      // API telefon raqam orqali yangilashni qo'llab-quvvatlasa
-      url = `${STATUS_API_BASE}/api/status/phone/${encodeURIComponent(formattedPhone.replace(/\s+/g, ''))}/order/${encodeURIComponent(orderId)}`;
-    } else {
-      throw new Error(`Invalid identifier type: ${typeof identifier}`);
-    }
-    
+
     const numericOrderId = toNumericId(orderId);
     if (!numericOrderId) {
       throw new Error(`Invalid orderId format: ${orderId}`);
     }
+
+    const url = `${STATUS_API_BASE}/api/status/user/${encodeURIComponent(numericUserId)}/order/${encodeURIComponent(numericOrderId)}`;
     
     console.log("Calling updateOrderStatus with URL:", url);
 
     const updateData = { status };
 
+    // Agar buyurtma yetkazilgan bo'lsa va kurer telefon raqami berilgan bo'lsa
     if (status === "completed" && courierPhone) {
       const formattedCourierPhone = formatPhoneNumberForApi(courierPhone) || courierPhone;
       updateData.phoneNumber = formattedCourierPhone;
 
+      // Kurer ma'lumotlarini seller uchun alohida jo'natish
       try {
         await axios.post(
           `${STATUS_API_BASE}/api/status/seller/info/`,
@@ -709,14 +698,24 @@ async function updateOrderStatus(identifier, orderId, status, courierPhone = nul
     }
 
     console.log("Sending update data:", updateData);
+    
+    // PUT request yuborish
     const { data } = await axios.put(url, updateData, {
       timeout: 15000,
       headers: { "Content-Type": "application/json" },
     });
+    
     console.log("updateOrderStatus response:", data);
     return data;
   } catch (e) {
-    console.error("updateOrderStatus failed:", e.response?.data || e.message || e);
+    console.error("updateOrderStatus failed:", {
+      url: e.config?.url,
+      method: e.config?.method,
+      data: e.config?.data,
+      status: e.response?.status,
+      response: e.response?.data,
+      message: e.message
+    });
     throw e;
   }
 }
@@ -988,8 +987,16 @@ async function handleUpdate(req, res) {
 
   // Foydalanuvchi ma'lumotlarini olish
   let customer = null;
-  let customerUserId = null;
+  let customerUserId = null; // External API userId (prefer from assignment.customer.userId)
+  let localUserId = null; // Lokal bazadagi foydalanuvchi ID (models.User.id)
   let customerPhone = null;
+  let assignment = null;
+
+  if (rawOrderId) {
+    assignment =
+      getOrderAssignment(rawOrderId) ||
+      (resolvedOrderNumber ? getOrderAssignment(String(resolvedOrderNumber)) : null);
+  }
   if (customerChatId) {
     const customerUser = await models.User.findOne({
       where: { chatId: customerChatId },
@@ -1005,13 +1012,51 @@ async function handleUpdate(req, res) {
         latitude: customerUser.latitude,
         longitude: customerUser.longitude,
       };
-      customerUserId = customerUser.id; // ← Lokal bazadagi ID (1)
-      customerPhone = customerUser.phone; // ← Telefon raqam (+998905253101)
-      
+      localUserId = customerUser.id; // Lokal bazadagi ID (models.User.id)
+      customerPhone = customerUser.phone; // Telefon raqam (+998905253101)
+
       if (customerUser.latitude && customerUser.longitude) {
         latitude = customerUser.latitude;
         longitude = customerUser.longitude;
       }
+    }
+  }
+
+  // Fallback to assignment snapshot if DB lookup didn't provide values
+  if (!customer && assignment?.customer) {
+    customer = assignment.customer;
+  }
+  if (assignment?.customer?.userId) {
+    // Har doim tashqi API dan kelgan userId ni afzal ko'ramiz
+    customerUserId = assignment.customer.userId;
+  } else if (!customerUserId && localUserId) {
+    // Agar tashqi userId bo'lmasa, lokal bazadagi ID dan foydalanamiz
+    customerUserId = localUserId;
+  }
+  if (!customerPhone && assignment?.customer?.phone) {
+    customerPhone = assignment.customer.phone;
+  }
+
+  if ((latitude === null || longitude === null) && assignment?.customer) {
+    if (assignment.customer.latitude) latitude = assignment.customer.latitude;
+    if (assignment.customer.longitude) longitude = assignment.customer.longitude;
+  }
+  if (!customerPhone && customerChatId) {
+    customerPhone = await getCustomerPhoneForApi(customerChatId);
+  }
+
+  if (
+    (resolvedOrderNumber === null || Number.isNaN(resolvedOrderNumber)) &&
+    assignment?.order
+  ) {
+    const assignmentOrderId =
+      assignment.order.orderId ??
+      assignment.order.externalId ??
+      assignment.order.id ??
+      null;
+    const assignmentNumericId = toNumericId(assignmentOrderId);
+    if (assignmentNumericId !== null) {
+      resolvedOrderNumber = assignmentNumericId;
     }
   }
 
@@ -1021,25 +1066,57 @@ async function handleUpdate(req, res) {
     console.log("Fetching orders for phone:", customerPhone);
     const ordersResp = await getUserOrdersWithRetry(customerPhone, 2);
     console.log("Orders response from API:", ordersResp);
-    
+
     if (ordersResp && ordersResp.success !== false) {
-      const list = Array.isArray(ordersResp) 
-        ? ordersResp 
+      const list = Array.isArray(ordersResp)
+        ? ordersResp
         : ordersResp?.orders || ordersResp?.data || [];
-      
+
       if (Array.isArray(list) && list.length > 0) {
-        // "pending" statusdagi buyurtmalarni topish
         const pendingOrders = list
           .filter((o) => (o.status || "").toLowerCase() === "pending");
-        
-        console.log("Pending orders found:", pendingOrders.length);
-        
-        if (pendingOrders.length > 0) {
+
+        const source = pendingOrders.length > 0 ? pendingOrders : list;
+        console.log("Pending orders found:", pendingOrders.length, "total orders:", list.length);
+
+        if (source.length > 0) {
           // Eng oxirgi (eng katta ID li) buyurtmani olish
-          pendingOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
-          resolvedOrderNumber = pendingOrders[0].id;
-          orderDetails = pendingOrders[0];
-          console.log("Found latest pending order from API:", orderDetails);
+          source.sort((a, b) => (b.id || 0) - (a.id || 0));
+          resolvedOrderNumber = source[0].id;
+          orderDetails = source[0];
+          console.log("Selected order from API:", orderDetails);
+        }
+      }
+    }
+  }
+
+  // Agar telefon raqam yoki userId bo'yicha topilmasa, chatId orqali urinib ko'ramiz
+  if (
+    !orderDetails &&
+    (!resolvedOrderNumber || Number.isNaN(resolvedOrderNumber)) &&
+    customerChatId
+  ) {
+    console.log("Trying to fetch orders by chatId (as userId):", customerChatId);
+    const ordersResp = await getUserOrdersWithRetry(customerChatId, 2);
+    console.log("Orders response from API by chatId:", ordersResp);
+
+    if (ordersResp && ordersResp.success !== false) {
+      const list = Array.isArray(ordersResp)
+        ? ordersResp
+        : ordersResp?.orders || ordersResp?.data || [];
+
+      if (Array.isArray(list) && list.length > 0) {
+        const pendingOrders = list.filter(
+          (o) => (o.status || "").toLowerCase() === "pending"
+        );
+
+        const source = pendingOrders.length > 0 ? pendingOrders : list;
+
+        if (source.length > 0) {
+          source.sort((a, b) => (b.id || 0) - (a.id || 0));
+          resolvedOrderNumber = source[0].id;
+          orderDetails = source[0];
+          console.log("Found order from API by chatId:", orderDetails);
         }
       }
     }
@@ -1050,20 +1127,22 @@ async function handleUpdate(req, res) {
     console.log("Trying to fetch orders by userId:", customerUserId);
     const ordersResp = await getUserOrdersWithRetry(customerUserId, 1); // Faqat 1 marta urinish
     console.log("Orders response from API by userId:", ordersResp);
-    
+
     if (ordersResp && ordersResp.success !== false) {
-      const list = Array.isArray(ordersResp) 
-        ? ordersResp 
+      const list = Array.isArray(ordersResp)
+        ? ordersResp
         : ordersResp?.orders || ordersResp?.data || [];
-      
+
       if (Array.isArray(list) && list.length > 0) {
         const pendingOrders = list
           .filter((o) => (o.status || "").toLowerCase() === "pending");
-        
-        if (pendingOrders.length > 0) {
-          pendingOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
-          resolvedOrderNumber = pendingOrders[0].id;
-          orderDetails = pendingOrders[0];
+
+        const source = pendingOrders.length > 0 ? pendingOrders : list;
+
+        if (source.length > 0) {
+          source.sort((a, b) => (b.id || 0) - (a.id || 0));
+          resolvedOrderNumber = source[0].id;
+          orderDetails = source[0];
           console.log("Found order from API by userId:", orderDetails);
         }
       }
@@ -1137,9 +1216,9 @@ async function handleUpdate(req, res) {
     console.log("Existing courier order updated");
   }
 
-  // External API ga yangilash - avval telefon raqam orqali
+  // External API ga yangilash
   const numericResolvedOrderId = toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
-  
+
   console.log("DEBUG - IDs for API update:", {
     customerUserId,
     customerPhone,
@@ -1147,18 +1226,21 @@ async function handleUpdate(req, res) {
     resolvedOrderNumber,
     normalizedOrderId
   });
-  
-  if (customerPhone && numericResolvedOrderId !== null) {
+
+  const apiIdentifier = customerUserId || customerChatId || null;
+
+  if (apiIdentifier && numericResolvedOrderId !== null) {
     try {
-      console.log(`Updating order status via API with phone: ${customerPhone}, orderId: ${numericResolvedOrderId}`);
-      // updateOrderStatus funksiyasi telefon raqamni qabul qilishi kerak
-      await updateOrderStatus(customerPhone, numericResolvedOrderId, "processing");
+      console.log(
+        `Updating order status via API with identifier: ${apiIdentifier}, orderId: ${numericResolvedOrderId}`
+      );
+      await updateOrderStatus(apiIdentifier, numericResolvedOrderId, "processing");
       console.log("Order status updated successfully in external API");
     } catch (error) {
-      console.error("Failed to update order status in API with phone:", error.message || error);
+      console.error("Failed to update order status in API:", error.message || error);
       
-      // Agar telefon raqam bilan xatolik bo'lsa, userId bilan urinib ko'ramiz
-      if (customerUserId) {
+      // Agar birlamchi identifier ishlamasa, userId bilan urinib ko'ramiz
+      if (customerUserId && apiIdentifier !== customerUserId) {
         try {
           console.log(`Trying with userId: ${customerUserId}, orderId: ${numericResolvedOrderId}`);
           await updateOrderStatus(customerUserId, numericResolvedOrderId, "processing");
@@ -1169,9 +1251,11 @@ async function handleUpdate(req, res) {
       }
     }
   } else {
-    console.warn("Cannot update order status - missing customerPhone or orderId:", {
+    console.warn("Cannot update order status - missing identifier or orderId:", {
+      apiIdentifier,
       customerPhone,
-      numericResolvedOrderId
+      customerUserId,
+      numericResolvedOrderId,
     });
   }
 
@@ -1200,6 +1284,14 @@ async function handleUpdate(req, res) {
         const rawOrderId = parts[2] || null;
         let resolvedOrderNumber = rawOrderId && /^\d+$/.test(rawOrderId) ? parseInt(rawOrderId, 10) : null;
 
+        // Order assignment snapshot (external userId, etc.)
+        let assignment = null;
+        if (rawOrderId) {
+          assignment =
+            getOrderAssignment(rawOrderId) ||
+            (resolvedOrderNumber ? getOrderAssignment(String(resolvedOrderNumber)) : null);
+        }
+
         try {
           await telegram.post("/deleteMessage", {
             chat_id: chatId,
@@ -1213,7 +1305,7 @@ async function handleUpdate(req, res) {
           parse_mode: "HTML",
         });
 
-        // Get customer phone for API calls
+        // Get customer phone for API calls (only for lookups, not as userId)
         let customerPhone = null;
         if (customerChatId) {
           customerPhone = await getCustomerPhoneForApi(customerChatId);
@@ -1294,12 +1386,34 @@ async function handleUpdate(req, res) {
         }
 
         if (!reassigned) {
-          if (customerPhone && resolvedOrderNumber && !Number.isNaN(resolvedOrderNumber)) {
+          // External API status update (cancelled) using userId/chatId, not phone
+          const numericOrderIdForApi =
+            toNumericId(resolvedOrderNumber) ?? toNumericId(normalizedOrderId);
+
+          const externalUserId = assignment?.customer?.userId ?? null;
+          const apiUserId =
+            (externalUserId != null ? toNumericId(externalUserId) : null) ??
+            (customerChatId != null ? toNumericId(customerChatId) : null);
+
+          if (apiUserId && numericOrderIdForApi !== null) {
             try {
-              await updateOrderStatus(customerPhone, resolvedOrderNumber, "cancelled");
+              console.log(
+                `Updating order status to cancelled via API with userId: ${apiUserId}, orderId: ${numericOrderIdForApi}`
+              );
+              await updateOrderStatus(apiUserId, numericOrderIdForApi, "cancelled");
+              console.log("Order status (cancelled) updated successfully in external API");
             } catch (e) {
-              console.error("Failed to update order status to cancelled:", e.message || e);
+              console.error(
+                "Failed to update order status to cancelled in external API:",
+                e.message || e
+              );
             }
+          } else {
+            console.warn("Cannot update external status to cancelled - missing userId or orderId", {
+              externalUserId,
+              customerChatId,
+              numericOrderIdForApi,
+            });
           }
 
           if (normalizedOrderId) {
@@ -1365,16 +1479,25 @@ async function handleUpdate(req, res) {
           const order = await models.CourierOrder.findByPk(orderDbId);
           if (order) {
             const plainOrder = typeof order.get === "function" ? order.get({ plain: true }) : order;
-
             let externalOrderId = plainOrder.orderId || plainOrder.externalOrderId || null;
 
             // Get customer phone for API calls
             let customerPhone = null;
             const customerChatId = resolveCustomerChatId(plainOrder) || plainOrder.customerChatId;
+            const assignmentSnapshot = externalOrderId
+              ? getOrderAssignment(String(externalOrderId))
+              : null;
+
             if (customerChatId) {
               customerPhone = await getCustomerPhoneForApi(customerChatId);
               console.log("Customer phone for delivery:", customerPhone);
-              
+              if (!customerPhone) {
+                const numericChatId = toNumericId(customerChatId);
+                if (numericChatId && numericChatId !== customerChatId) {
+                  customerPhone = await getCustomerPhoneForApi(numericChatId);
+                  console.log("Customer phone retry with numeric chatId:", customerPhone);
+                }
+              }
               // If it's a temporary ID, try to get the real order ID from the API
               if (externalOrderId && externalOrderId.startsWith("tmp-") && customerPhone) {
                 console.log("Found temporary order ID, fetching real order ID from API...");
@@ -1382,10 +1505,10 @@ async function handleUpdate(req, res) {
                 try {
                   const ordersResp = await getUserOrdersWithRetry(customerPhone, 2);
                   console.log("Orders response for delivery:", ordersResp);
-                  
+
                   if (ordersResp && ordersResp.success !== false) {
-                    const ordersList = Array.isArray(ordersResp) 
-                      ? ordersResp 
+                    const ordersList = Array.isArray(ordersResp)
+                      ? ordersResp
                       : ordersResp?.data || [];
 
                     // Find the most recent processing order for this customer
@@ -1403,10 +1526,52 @@ async function handleUpdate(req, res) {
                 }
               }
             }
+            if (!customerPhone) {
+              customerPhone =
+                plainOrder.phone ||
+                plainOrder?.payload?.customer?.phone ||
+                plainOrder?.payload?.order?.customer?.phone ||
+                assignmentSnapshot?.customer?.phone ||
+                null;
+            }
+            if (!customerPhone && plainOrder?.customerUserId) {
+              try {
+                const customerRecord = await models.User.findOne({
+                  where: { id: plainOrder.customerUserId },
+                  attributes: ["phone"],
+                  raw: true,
+                });
+                customerPhone = customerRecord?.phone || customerPhone;
+              } catch (lookupErr) {
+                console.error("Failed to fetch customer phone by userId:", lookupErr.message || lookupErr);
+              }
+            }
 
             const numericExternalOrderId = toNumericId(externalOrderId);
 
-            console.log("Final IDs - externalOrderId:", externalOrderId, "numericExternalOrderId:", numericExternalOrderId, "customerPhone:", customerPhone);
+            // Prefer external userId from payload/assignment for API calls
+            const externalUserId =
+              plainOrder?.payload?.order?.customer?.userId ??
+              plainOrder?.payload?.customer?.userId ??
+              assignmentSnapshot?.customer?.userId ??
+              null;
+
+            const apiUserId =
+              (externalUserId != null ? toNumericId(externalUserId) : null) ??
+              (customerChatId != null ? toNumericId(customerChatId) : null);
+
+            console.log(
+              "Final IDs - externalOrderId:",
+              externalOrderId,
+              "numericExternalOrderId:",
+              numericExternalOrderId,
+              "externalUserId:",
+              externalUserId,
+              "apiUserId:",
+              apiUserId,
+              "customerPhone:",
+              customerPhone
+            );
 
             // Update order status to completed in our database
             await models.CourierOrder.update(
@@ -1431,19 +1596,21 @@ async function handleUpdate(req, res) {
               console.error("Failed to fetch current user's phone:", e.message || e);
             }
 
-            // Update external API using phone number as userId
-            if (customerPhone && numericExternalOrderId !== null) {
+            // Update external API using userId/chatId, not phone
+            if (apiUserId && numericExternalOrderId !== null) {
               try {
-                console.log(`Updating order status for phone: ${customerPhone}, order: ${numericExternalOrderId}`);
-                await updateOrderStatus(customerPhone, numericExternalOrderId, "completed", sellerPhone);
+                console.log(
+                  `Updating external order status for userId: ${apiUserId}, order: ${numericExternalOrderId}`
+                );
+                await updateOrderStatus(apiUserId, numericExternalOrderId, "completed", sellerPhone);
                 console.log("Order status updated successfully in external API");
               } catch (e) {
                 console.error("Failed to update order status in external API:", e.message || e);
               }
             } else {
-              console.warn("Cannot update order status - missing customerPhone or numericExternalOrderId:", {
-                customerPhone: customerPhone,
-                numericExternalOrderId: numericExternalOrderId,
+              console.warn("Cannot update order status - missing apiUserId or numericExternalOrderId:", {
+                apiUserId,
+                numericExternalOrderId,
               });
             }
 
