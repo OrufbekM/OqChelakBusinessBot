@@ -1843,6 +1843,14 @@ async function handleUpdate(req, res) {
       }
 
       if (state.expected === "full_name" && text) {
+        // Agar foydalanuvchi ism o'rniga buyruq yuborsa (masalan, /start),
+        // uni fullName sifatida qabul qilmaymiz va ismni qaytadan so'raymiz.
+        if (text.startsWith("/")) {
+          await sendTranslatedMessage(chatId, "ask_full_name");
+          res.sendStatus(200);
+          return;
+        }
+
         state.userData = state.userData || {};
         state.userData.fullName = text.trim();
         state.expected = "name_confirm";
