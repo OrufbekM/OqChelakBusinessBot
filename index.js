@@ -12,12 +12,13 @@ const { handleUpdate, getWebhookPath } = require(path.join(
   "lib",
   "telegram"
 ));
-const {
-  startNgrokAndSetWebhook,
-  getWebhookInfo,
-  deleteWebhook,
-  normalizeUrl,
-} = require(path.join(__dirname, "app", "controller", "lib", "axios"));
+const { getWebhookInfo, deleteWebhook, normalizeUrl } = require(path.join(
+  __dirname,
+  "app",
+  "controller",
+  "lib",
+  "axios"
+));
 const models = require(path.join(__dirname, "app", "models", "index.js"));
 const verificationRouter = require(path.join(
   __dirname,
@@ -38,6 +39,7 @@ app.use(express.json());
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const WEBHOOK_PATH = getWebhookPath();
 
+// Telegram webhook endpoint
 app.post(WEBHOOK_PATH, handleUpdate);
 
 app.use("/api/verification", verificationRouter);
@@ -66,10 +68,12 @@ app.get("/debug/webhook-info", async (req, res) => {
 
 app.post("/debug/reset-webhook", async (req, res) => {
   try {
-    const publicUrl = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
-    const fullUrl = normalizeUrl(publicUrl, WEBHOOK_PATH);
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    const fullUrl = normalizeUrl(renderUrl, WEBHOOK_PATH);
+
     const del = await deleteWebhook();
     await new Promise((r) => setTimeout(r, 250));
+
     const set = await (async () => {
       try {
         const resp = await require("./app/controller/lib/axios").telegram.post(
@@ -83,20 +87,30 @@ app.post("/debug/reset-webhook", async (req, res) => {
         );
       }
     })();
+
     res.json({ deleted: del, set, fullUrl, webhookPath: WEBHOOK_PATH });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
+// Server start + webhook setup
 app.listen(PORT, async () => {
   try {
     await models.initModels();
-    const publicUrl = await startNgrokAndSetWebhook(PORT, WEBHOOK_PATH);
-    console.log(`Server listening on http://localhost:${PORT}`);
-    console.log(`Public URL: ${publicUrl}`);
-    console.log(`Webhook set to: ${publicUrl}${WEBHOOK_PATH}`);
+
+    const renderUrl = process.env.RENDER_EXTERNAL_URL || "https://oqchelakbusinessbot.onrender.com";
+    const fullUrl = normalizeUrl(renderUrl, WEBHOOK_PATH);
+
+    await deleteWebhook();
+    await new Promise(r => setTimeout(r, 250));
+
+    const axiosLib = require("./app/controller/lib/axios");
+    const response = await axiosLib.telegram.post("/setWebhook", { url: fullUrl });
+
+    console.log(`Server listening on port ${PORT}`);
+    console.log("Webhook set to:", fullUrl);
   } catch (err) {
-    console.error("Failed to initialize ngrok/webhook:", err.message || err);
+    console.error("Failed to set webhook:", err.message || err);
   }
 });
