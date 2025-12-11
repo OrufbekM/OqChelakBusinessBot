@@ -99,18 +99,18 @@ app.listen(PORT, async () => {
   try {
     await models.initModels();
 
-    const renderUrl = process.env.RENDER_EXTERNAL_URL || "https://oqchelakbusinessbot.onrender.com";
-    const fullUrl = normalizeUrl(renderUrl, WEBHOOK_PATH);
+    const renderUrl = process.env.RENDER_EXTERNAL_URL || 'https://oqchelakbusinessbot.onrender.com';
+    const fullUrl = `${renderUrl}${WEBHOOK_PATH}`;
 
+    // webhookni o‘chirish va yangilash
     await deleteWebhook();
     await new Promise(r => setTimeout(r, 250));
-
     const axiosLib = require("./app/controller/lib/axios");
     const response = await axiosLib.telegram.post("/setWebhook", { url: fullUrl });
 
-    console.log(`Server listening on port ${PORT}`);
     console.log("Webhook set to:", fullUrl);
   } catch (err) {
     console.error("Failed to set webhook:", err.message || err);
   }
 });
+
